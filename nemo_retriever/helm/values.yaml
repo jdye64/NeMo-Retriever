@@ -598,6 +598,12 @@ serviceConfig:
       useTableStructure: true
       ocrVersion: v2
       ocrLang: ""
+      # pdfium | pdfium_hybrid | ocr | fused
+      # "fused" runs page elements, table structure, OCR, and embedding as a
+      # single GPU-resident model. It requires the optional
+      # nemo_retriever_fused package in the image and is ignored when a
+      # per-stage NIM URL is set, since NIM endpoints take precedence.
+      method: pdfium
     embed:
       enabled: true
       modelName: nvidia/llama-nemotron-embed-vl-1b-v2

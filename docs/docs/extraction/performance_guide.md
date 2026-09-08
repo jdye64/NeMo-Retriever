@@ -70,6 +70,62 @@ Related batch-size, CPU, and GPU-per-actor flags are documented in the [CLI inge
 
 Use the Ray dashboard to verify the available-resource snapshot and the planned worker allocation when you tune throughput.
 
+### Fused extraction tuning { #fused-extraction-tuning }
+
+`ExtractParams(method="fused")` runs page elements detection, table structure
+reconstruction, OCR, and embedding as one GPU-resident stage. That stage holds
+the whole model stack in one process, so you tune it as a single actor pool
+instead of tuning the four stages separately with `BatchTuningParams`. The
+architectural benefit is that the model decodes each page raster once and keeps
+the intermediate tensors on the device, which removes the host-to-device and
+device-to-host copies that separate stages require.
+
+Tune the pool with `FusedTuningParams` on `ExtractParams.fused_tuning`. The
+following fields are supported.
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `fused_workers` | `1` | Number of fused-stage actors. |
+| `fused_batch_size` | `64` | Pages submitted to the fused model for each call. |
+| `fused_cpus_per_actor` | `1` | CPUs reserved for each fused actor. |
+| `fused_gpus_per_actor` | `1.0` | GPUs reserved for each fused actor. The default is a whole device because the resident page tensors and the embedding tower are not shareable with a co-located actor. |
+
+The following Python example raises the fused batch size and runs two fused
+actors on a two-GPU host:
+
+```python
+from pathlib import Path
+
+from nemo_retriever import create_ingestor
+from nemo_retriever.common.params import ExtractParams, FusedTuningParams
+
+documents = [str(Path("data/multimodal_test.pdf"))]
+
+result = (
+    create_ingestor(run_mode="batch")
+    .files(documents)
+    .extract(
+        ExtractParams(
+            method="fused",
+            fused_tuning=FusedTuningParams(
+                fused_workers=2,
+                fused_batch_size=128,
+            ),
+        )
+    )
+    .ingest()
+)
+```
+
+The example omits `.embed()` because the fused model emits embeddings directly.
+Refer to [Run fused GPU-resident PDF extraction](nemo-retriever-api-reference.md#fused-gpu-resident-extraction)
+for the validation rules and the optional package requirement.
+
+Size `fused_workers` multiplied by `fused_gpus_per_actor` to the GPU capacity
+that Ray reports for the cluster. Because the default reserves a whole GPU for
+each actor, a request for more fused actors than available GPUs cannot
+schedule.
+
 ## Shared preflight for custom Ray Data graphs
 
 `GraphIngestor` reserves source capacity automatically. For custom graphs, declare source capacity before calling `preflight_executors(...)`. Set `source_cpu_reservation=1` on each `RayDataExecutor` that will receive a filesystem path or glob. `source_cpu_reservation` must be a finite, non-negative CPU value. An executor that only receives an existing Ray dataset can omit the reservation.

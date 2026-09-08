@@ -48,12 +48,18 @@ def build_warmup_spec(
     extract = extract_params_dict or {}
     stages: list[str] = []
 
-    if not str(extract.get("page_elements_invoke_url") or "").strip():
-        stages.append("page_elements")
-    if not str(extract.get("ocr_invoke_url") or "").strip():
-        stages.append("ocr")
-    if extract.get("use_table_structure") and not str(extract.get("table_structure_invoke_url") or "").strip():
-        stages.append("table_structure")
+    # Fused extraction owns all four stage models inside one object, so warming
+    # the staged models as well would double the worker's VRAM for no benefit.
+    fused = extract.get("method") == "fused"
+    if fused:
+        stages.append("fused")
+    else:
+        if not str(extract.get("page_elements_invoke_url") or "").strip():
+            stages.append("page_elements")
+        if not str(extract.get("ocr_invoke_url") or "").strip():
+            stages.append("ocr")
+        if extract.get("use_table_structure") and not str(extract.get("table_structure_invoke_url") or "").strip():
+            stages.append("table_structure")
 
     embed_spec: dict[str, Any] | None = None
     if embed_params_dict:
@@ -111,6 +117,17 @@ def warm_local_models(spec: dict[str, Any]) -> None:
 
     clear_warmed_models()
     stages = set(spec.get("stages") or [])
+
+    if "fused" in stages:
+        from nemo_retriever.common.modality.fused.shared import FUSED_IMPORT_HINT
+
+        try:
+            from nemo_retriever_fused import NemoRetrieverFusedModel
+        except ImportError as exc:  # pragma: no cover - depends on optional install
+            raise ImportError(FUSED_IMPORT_HINT) from exc
+
+        logger.info("Warming local model: fused")
+        _REGISTRY["fused"] = NemoRetrieverFusedModel.from_pretrained()
 
     if "page_elements" in stages:
         from nemo_retriever.models.local import NemotronPageElementsV3

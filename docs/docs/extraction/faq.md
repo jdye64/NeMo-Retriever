@@ -63,6 +63,13 @@ you can use [nemotron-parse](https://build.nvidia.com/nvidia/nemotron-parse) as 
 Nemotron Parse does not produce chart modality rows. For chart detection and chart-filtered retrieval, use the default **pdfium** layout path instead (refer to [Charts and infographics](multimodal-extraction.md#charts-and-infographics)).
 For more information, refer to [Nemotron Parse](https://build.nvidia.com/nvidia/nemotron-parse).
 
+## What does the fused extraction method do? { #what-does-fused-extraction-do }
+
+`method="fused"` replaces four pipeline stages with one GPU-resident model that performs page elements detection, table structure reconstruction, OCR, and embedding.
+The model decodes each page raster once into device memory and keeps the intermediate tensors on the GPU, so the pipeline does not copy page images between the host and the device between those stages.
+Because the fused model runs every stage locally, it does not accept per-stage NIM endpoints, and it requires the optional fused model package.
+For the configuration contract, refer to [Run fused GPU-resident PDF extraction](nemo-retriever-api-reference.md#fused-gpu-resident-extraction).
+
 ## Why does Helm report deployed while PersistentVolumeClaims stay Pending? { #helm-deployed-pending-pvcs }
 
 `STATUS: deployed` means Helm rendered the release. It does not mean PersistentVolumeClaims bound or that pods can schedule.

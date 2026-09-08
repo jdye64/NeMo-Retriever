@@ -505,6 +505,21 @@ class BatchTuningParams(_ParamsModel):
     inference_batch_size: int = 8
 
 
+class FusedTuningParams(_ParamsModel):
+    """Actor tuning for the single fused GPU-resident extraction stage.
+
+    The fused stage replaces four separate actors, so it holds the whole model
+    stack in one process and is tuned as one pool rather than per stage. The
+    GPU default is a whole device because the resident page tensors and the
+    embedding tower are not shareable with a co-located actor.
+    """
+
+    fused_workers: int = 1
+    fused_batch_size: int = 64
+    fused_cpus_per_actor: float = 1
+    fused_gpus_per_actor: float = 1.0
+
+
 class GpuAllocationParams(_ParamsModel):
     gpu_devices: list[str] = Field(default_factory=list)
     startup_timeout: float = 600.0
@@ -520,11 +535,13 @@ class ExtractParams(_ParamsModel):
     extract_page_as_image: Optional[bool] = True
 
     # Extraction options
-    method: Literal["pdfium", "pdfium_hybrid", "ocr", "nemotron_parse", "audio"] = Field(
+    method: Literal["pdfium", "pdfium_hybrid", "ocr", "nemotron_parse", "audio", "fused"] = Field(
         default="pdfium",
         description=(
-            "Extraction method. PDF extraction supports 'pdfium', 'pdfium_hybrid', 'ocr', and "
-            "'nemotron_parse'; 'audio' is retained for the legacy params-driven audio path."
+            "Extraction method. PDF extraction supports 'pdfium', 'pdfium_hybrid', 'ocr', "
+            "'nemotron_parse', and 'fused'; 'audio' is retained for the legacy params-driven "
+            "audio path. 'fused' replaces the page-elements, table-structure, OCR, and embed "
+            "stages with a single GPU-resident model that keeps page tensors on device."
         ),
     )
     # Run PageElementDetection (layout/yolox). Required by TableStructure and
@@ -562,6 +579,7 @@ class ExtractParams(_ParamsModel):
 
     remote_retry: RemoteRetryParams = Field(default_factory=RemoteRetryParams)
     batch_tuning: BatchTuningParams = Field(default_factory=BatchTuningParams)
+    fused_tuning: FusedTuningParams = Field(default_factory=FusedTuningParams)
 
     @model_validator(mode="after")
     def _auto_enable_features(self) -> "ExtractParams":
@@ -597,6 +615,30 @@ class ExtractParams(_ParamsModel):
                     f"received `{self.nemotron_parse_model}`. Configure `nemotron_parse_invoke_url` or `invoke_url` "
                     "to use a compatible remote model."
                 )
+        if self.method == "fused":
+            delegated = [
+                name
+                for name, url in (
+                    ("page_elements_invoke_url", self.page_elements_invoke_url),
+                    ("ocr_invoke_url", self.ocr_invoke_url),
+                    ("table_structure_invoke_url", self.table_structure_invoke_url),
+                )
+                if str(url or "").strip()
+            ]
+            if delegated:
+                raise ValueError(
+                    "`method='fused'` runs page elements, table structure, OCR, and embedding as a "
+                    "single local GPU model and cannot delegate a stage to a NIM; remove: "
+                    f"{', '.join(delegated)}."
+                )
+            if not self.use_page_elements:
+                raise ValueError(
+                    "`method='fused'` detects page elements inside the fused model; "
+                    "`use_page_elements=False` is incompatible with it."
+                )
+            # The fused model reads the page raster directly, so the upstream PDF
+            # stage must render one even when the caller opted out.
+            self.extract_page_as_image = True
         if not self.use_page_elements:
             consumers = [("use_table_structure", self.use_table_structure and self.extract_tables)]
             enabled = [name for name, on in consumers if on]

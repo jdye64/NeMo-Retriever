@@ -27,6 +27,7 @@ from nemo_retriever.operators.extract.video.audio_visual_fuser import AudioVisua
 from nemo_retriever.operators.extract.video.ocr_actor import VideoFrameOCRActor
 from nemo_retriever.operators.extract.video.text_dedup import VideoFrameTextDedup
 from nemo_retriever.operators.extract.video.split import VideoSplitActor
+from nemo_retriever.operators.extract.fused.fused_extract import FusedExtractionActor
 from nemo_retriever.operators.extract.ocr.ocr import resolve_ocr_archetype
 from nemo_retriever.operators.extract.parse.nemotron_parse import NemotronParseActor
 from nemo_retriever.operators.extract.page_elements.page_elements import PageElementDetectionActor
@@ -75,6 +76,24 @@ def _image_embedding_requires_page_image(params: Any | None) -> bool:
     }
 
 
+def is_fused_extraction(extract_params: Any | None) -> bool:
+    """Return whether extraction runs as the single fused GPU stage."""
+    return getattr(extract_params, "method", None) == "fused"
+
+
+def fused_absorbs_embed(extract_params: Any | None, embed_params: Any | None) -> bool:
+    """Return whether the fused stage embeds, letting the embed stage be skipped.
+
+    The fused model emits one embedding per page, which lines up with
+    ``embed_granularity="page"``. Element granularity explodes each page into
+    one row per detected element *before* embedding, so those rows do not exist
+    yet when the fused stage runs; that path keeps the dedicated embed stage.
+    """
+    if embed_params is None or not is_fused_extraction(extract_params):
+        return False
+    return getattr(embed_params, "embed_granularity", None) == "page"
+
+
 def default_concurrency_node_names(
     extract_params: Any | None,
     embed_params: Any | None,
@@ -84,7 +103,10 @@ def default_concurrency_node_names(
     """Return pools whose concurrency came from an unspecified default."""
     names: set[str] = set()
     extract_tuning = _batch_tuning(extract_params)
-    if extract_params is not None:
+    # Fused concurrency comes from FusedTuningParams, whose worker count has a
+    # real default rather than None, so it is never heuristic-derived and the
+    # staged per-actor fields below do not apply.
+    if extract_params is not None and not is_fused_extraction(extract_params):
         worker_fields = {
             resolve_ocr_archetype(extract_params).__name__: "ocr_workers",
             PageElementDetectionActor.__name__: "page_elements_workers",
@@ -389,6 +411,34 @@ def batch_tuning_to_node_overrides(
         _set(PDFExtractionActor.__name__, "concurrency", pdf_extract_tasks)
         _set(PDFExtractionActor.__name__, "num_cpus", pdf_extract_cpus if pdf_extract_cpus != 1.0 else None)
 
+        if is_fused_extraction(extract_params):
+            # The fused stage is one pool holding the whole model stack, so it
+            # is tuned from FusedTuningParams rather than the per-stage fields
+            # in BatchTuningParams, and it takes a whole GPU by default.
+            fused_tuning = getattr(extract_params, "fused_tuning", None)
+            _set(
+                FusedExtractionActor.__name__,
+                "batch_size",
+                getattr(fused_tuning, "fused_batch_size", None),
+            )
+            _set(
+                FusedExtractionActor.__name__,
+                "concurrency",
+                getattr(fused_tuning, "fused_workers", None),
+            )
+            _set(
+                FusedExtractionActor.__name__,
+                "num_cpus",
+                getattr(fused_tuning, "fused_cpus_per_actor", None),
+            )
+            if effective_allow_no_gpu:
+                _force_cpu_only(FusedExtractionActor.__name__)
+            else:
+                _set_gpu(
+                    FusedExtractionActor.__name__,
+                    getattr(fused_tuning, "fused_gpus_per_actor", None),
+                )
+
     # VideoSplitActor: one ffmpeg subprocess per input video, ~1-2 CPU cores
     # per actor during decode. Default Ray Data concurrency=1 serialises every
     # video, making this stage the wall-clock bottleneck on multi-video inputs.
@@ -541,6 +591,7 @@ def _append_ordered_transform_stages(
     stage_order: tuple[str, ...],
     supports_dedup: bool,
     reshape_content_before_embed: bool,
+    embed_absorbed_upstream: bool = False,
 ) -> Graph:
     """Append post-extraction transform stages in the exact recorded plan order."""
 
@@ -568,6 +619,12 @@ def _append_ordered_transform_stages(
         elif stage_name == "caption" and caption_params is not None:
             graph = graph >> CaptionActor(caption_params)
         elif stage_name == "embed" and embed_params is not None:
+            if embed_absorbed_upstream:
+                # The fused extraction stage already emitted page embeddings in
+                # the columns this stage would have written, and it did so
+                # without a reshape because it works at page granularity.
+                logger.info("Embedding absorbed by the fused extraction stage; skipping the batch embed stage")
+                continue
             if reshape_content_before_embed:
                 content_columns = (_CONTENT_COLUMNS + ("images",)) if caption_params is not None else _CONTENT_COLUMNS
                 if embed_params.embed_granularity == "page":
@@ -620,6 +677,7 @@ def build_post_extract_graph(
     webhook_params: Any | None = None,
     stage_order: tuple[str, ...] = (),
     reshape_content_before_embed: bool = True,
+    embed_absorbed_upstream: bool = False,
 ) -> Graph:
     """Build only the common stages that run after extraction branch union."""
 
@@ -634,6 +692,7 @@ def build_post_extract_graph(
         stage_order=stage_order,
         supports_dedup=True,
         reshape_content_before_embed=reshape_content_before_embed,
+        embed_absorbed_upstream=embed_absorbed_upstream,
     )
 
 
@@ -792,7 +851,29 @@ def build_graph(
 
         extract_kwargs = build_pdf_extraction_kwargs(extract_params)
 
-        if parse_mode:
+        if is_fused_extraction(extract_params):
+            # The fused model reads the page raster directly from the frame.
+            extract_kwargs["extract_page_as_image"] = True
+            graph = graph >> PDFExtractionActor(**extract_kwargs)
+
+            fused_kwargs: dict[str, Any] = {
+                "extract_text": extract_params.extract_text,
+                "extract_tables": extract_params.extract_tables,
+                "extract_charts": extract_params.extract_charts,
+                "extract_infographics": extract_params.extract_infographics,
+                "use_table_structure": extract_params.use_table_structure,
+                "embed_pages": fused_absorbs_embed(extract_params, embed_params),
+            }
+            if fused_kwargs["embed_pages"]:
+                fused_kwargs["embed_output_column"] = embed_params.embed_output_column
+                fused_kwargs["embedding_dim_column"] = embed_params.embedding_dim_column
+                fused_kwargs["has_embedding_column"] = embed_params.has_embedding_column
+            logger.info(
+                "Selected fused extraction: one GPU-resident stage replaces page elements, " "table structure, OCR%s",
+                " and embedding" if fused_kwargs["embed_pages"] else "",
+            )
+            graph = graph >> FusedExtractionActor(**fused_kwargs)
+        elif parse_mode:
             # PDF extraction renders pages to images required by Nemotron Parse.
             extract_kwargs["extract_page_as_image"] = True
             graph = graph >> PDFExtractionActor(**extract_kwargs)
@@ -897,6 +978,7 @@ def build_graph(
         stage_order=stage_order,
         supports_dedup=True,
         reshape_content_before_embed=extraction_mode in {"pdf", "image", "auto"},
+        embed_absorbed_upstream=fused_absorbs_embed(extract_params, embed_params),
     )
 
 

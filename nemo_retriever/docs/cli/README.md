@@ -384,7 +384,7 @@ These options apply to `retriever ingest`, `retriever ingest local`, and
 | `--table-name` | `nemo-retriever` | LanceDB table name. Must match query-time storage flags. Python `.vdb_upload()` and default `Retriever()` use the same default. |
 | `--overwrite/--append` | overwrite | Overwrite the table by default; use `--append` to add rows. |
 | `--index-mode` | `auto` | Recommended: leave this unset. `auto` creates a hybrid vector + BM25/FTS configuration for new tables and preserves an existing table on append. Use `dense`, `hybrid`, or `sparse` only for explicit experiments or specialized deployments. |
-| `--method` | profile default | PDF extraction method: `pdfium`, `pdfium_hybrid`, `ocr`, or `nemotron_parse`. The `auto` profile selects `pdfium_hybrid`; `fast-text` selects `pdfium`. An explicit value overrides the profile-selected method. |
+| `--method` | profile default | PDF extraction method: `pdfium`, `pdfium_hybrid`, `ocr`, `nemotron_parse`, or `fused`. The `auto` profile selects `pdfium_hybrid`; `fast-text` selects `pdfium`. An explicit value overrides the profile-selected method. |
 | `--extract-text`, `--extract-tables`, `--extract-charts` | planner default | Enable or disable extraction families. |
 | `--ocr-version` | planner default | OCR engine version for local extraction. |
 | `--ocr-lang` | planner default | OCR v2 language selector for local extraction. |
@@ -526,6 +526,12 @@ selected by the profile.
 - `ocr` uses Page Elements and OCR for PDF page text on every page.
 - `nemotron_parse` uses the Nemotron Parse visual extraction path instead of
   the Page Elements and OCR path.
+- `fused` replaces the Page Elements, Table Structure, OCR, and embed stages
+  with a single GPU-resident model. The model decodes each page raster once and
+  keeps the intermediate tensors on the GPU, so the pipeline avoids
+  host-to-device and device-to-host copies between those stages. It requires
+  the optional `nemo_retriever_fused` package and a local NVIDIA GPU, and it
+  does not accept per-stage NIM endpoint options.
 
 The `fast-text` profile is the explicit text-only exception. It selects
 `pdfium` and disables Page Elements, page rendering, image extraction, table
@@ -536,6 +542,13 @@ For example, select hybrid extraction for a PDF that contains scanned pages:
 ```bash
 retriever ingest ./data/scanned.pdf \
   --method pdfium_hybrid
+```
+
+To run the fused GPU-resident model instead of the separate stages:
+
+```bash
+retriever ingest ./data/multimodal_test.pdf \
+  --method fused
 ```
 
 `--ocr-version` and `--ocr-lang` configure the local OCR engine when an enabled

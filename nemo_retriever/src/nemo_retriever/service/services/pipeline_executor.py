@@ -941,6 +941,14 @@ def build_extract_params(nim: "NimEndpointsConfig", local: "LocalModelsConfig | 
             kwargs["ocr_version"] = local.extract.ocr_version
             if local.extract.ocr_lang is not None:
                 kwargs["ocr_lang"] = local.extract.ocr_lang
+        # Fused extraction owns every stage locally, so it only applies when no
+        # per-stage NIM has claimed one. ExtractParams rejects the combination
+        # outright, so screen it here rather than raising on a valid deployment
+        # that simply prefers its NIMs.
+        if local.extract.method == "fused" and not any(
+            (nim.page_elements_invoke_url, nim.ocr_invoke_url, nim.table_structure_invoke_url)
+        ):
+            kwargs["method"] = "fused"
 
     return ExtractParams(**kwargs)
 
