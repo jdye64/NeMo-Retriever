@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nemo-retriever-fused"
+version = "0.1.0"
+description = "Fused, GPU-resident NeMo Retriever extraction and embedding model"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "numpy>=1.26",
+    "pillow>=10.0",
+    "huggingface-hub>=0.27",
+    "transformers>=4.46",
+]
+
+[project.optional-dependencies]
+# The upstream stage packages. Version floors match the `local` extra in
+# nemo_retriever/pyproject.toml so a fused install resolves the same code the
+# production pipeline runs.
+local = [
+    "nemotron-page-elements-v3>=3.0.1,<4",
+    "nemotron-table-structure-v1>=1.0.0,<2",
+    "nemotron-ocr>=2.0.0,<3; sys_platform == 'linux'",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "black>=24.0",
+    "flake8>=7.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["nemo_retriever_fused*"]
+
+# Formatting and lint match the repository root: black and flake8 at 120
+# columns, with the same flake8 ignore list as .pre-commit-config.yaml.
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "requires_cuda: test needs a CUDA device and skips without one",
+]
