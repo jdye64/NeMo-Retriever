@@ -163,6 +163,7 @@ local_models:
     use_table_structure: {{ .Values.serviceConfig.localModels.extract.useTableStructure }}
     ocr_version: {{ .Values.serviceConfig.localModels.extract.ocrVersion | quote }}
     ocr_lang: {{ if .Values.serviceConfig.localModels.extract.ocrLang }}{{ .Values.serviceConfig.localModels.extract.ocrLang | quote }}{{ else }}null{{ end }}
+    method: {{ .Values.serviceConfig.localModels.extract.method | default "pdfium" | quote }}
   embed:
     enabled: {{ .Values.serviceConfig.localModels.embed.enabled }}
     model_name: {{ .Values.serviceConfig.localModels.embed.modelName | quote }}

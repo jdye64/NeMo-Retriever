@@ -22,7 +22,7 @@ NeMo Retriever Library does the following:
 
 - Accept directories of input files and configurable ingestion tasks
 - Store extracted content in a vector database (VDB) with discrete metadata elements
-- Support multiple extraction methods per document type—for example, PDFs can use **pdfium** or [Nemotron Parse](https://build.nvidia.com/nvidia/nemotron-parse) as an alternate method (`method="nemotron_parse"`)
+- Support multiple extraction methods per document type—for example, PDFs can use **pdfium**, [Nemotron Parse](https://build.nvidia.com/nvidia/nemotron-parse) as an alternate method (`method="nemotron_parse"`), or a single GPU-resident model that fuses layout detection, table structure, OCR, and embedding (`method="fused"`)
 - Apply pre- and post-processing: text splitting and chunking, transforms and filtering, embedding generation, and image offloading to storage
 
 !!! note

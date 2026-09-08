@@ -24,6 +24,15 @@ Before you begin using [NeMo Retriever Library](overview.md), confirm your softw
   `open-clip-torch`, which provides the `open_clip` module required by the Nemotron Parse
   NIM client). The base `nemo-retriever` install and `[local]` extra do not include this
   package. You can use the equivalent `pip install` command if you do not use UV.
+- For PDF extraction with `method="fused"`, install the optional
+  `nemo_retriever_fused` package. It is not part of the base `nemo-retriever`
+  install or the `[local]` extra, and it is not published to PyPI or the
+  Hugging Face Hub. It currently lives in the NeMo Retriever repository under
+  `uber_model/nemo-retriever/`, so install it from a checkout of the repository
+  with `pip install ./uber_model/nemo-retriever`. The fused model runs every
+  stage on one local NVIDIA GPU, so this method requires supported local GPU
+  inference. Refer to
+  [Run fused GPU-resident PDF extraction](nemo-retriever-api-reference.md#fused-gpu-resident-extraction).
 
 > **Note**
 >

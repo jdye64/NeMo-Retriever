@@ -37,8 +37,9 @@ when troubleshooting. The `error` value can be a nested object or a string.
 configured invoke URL: Page Elements, OCR, Table Structure, Nemotron Parse,
 and embedding. It does not automatically raise for:
 
-- Local-only pipelines (`pdfium` without remote URLs), even when rows contain
-  `metadata.error` or column-level error payloads.
+- Local-only pipelines (`pdfium` without remote URLs, or `fused`, which does
+  not accept per-stage NIM endpoints), even when rows contain `metadata.error`
+  or column-level error payloads.
 - Caption or remote VLM stages. Missing credentials fail at actor setup;
   inference failures can abort the entire ingest.
 - Audio or video ASR over gRPC or HTTP. Failures can drop individual rows and
@@ -80,6 +81,7 @@ troubleshooting path. A single document can pass through several stages.
 | `ExtractParams(method="pdfium_hybrid")` | PDFium plus Page Elements, OCR, and optionally Table Structure | The local PDF signals above, or a row-level/HTTP failure attributed to Page Elements, OCR, or Table Structure |
 | `ExtractParams(method="ocr")` | Page rendering, Page Elements, and the local or remote OCR backend | Missing local model dependencies, invalid image payload, authentication/transport status, or OCR row-level failure |
 | `ExtractParams(method="nemotron_parse")` | PDF rendering and local Nemotron Parse model or configured Nemotron Parse NIM | Missing `open_clip`, missing local model configuration, unsupported image input, or Nemotron Parse row-level/HTTP failure |
+| `ExtractParams(method="fused")` | PDF rendering and the single GPU-resident fused model that runs page elements, table structure, OCR, and embedding | `ValueError` at construction for a rejected parameter combination, `ImportError` when the optional fused model package is missing, or GPU out-of-memory and actor exit under a large `fused_batch_size` |
 | `.caption(...)` | Local caption model or remote VLM endpoint | `ValueError` at setup when credentials or endpoint/protocol are invalid; remote inference failures can abort the whole ingest rather than populate a row error column |
 | `.embed(...)` | Local embedding model or configured embedding NIM | Model/dependency error, input-size or schema rejection, authentication/transport status, or embedding row-level failure; `GraphIngestionError` when a remote embed URL is configured |
 | Audio or video extraction | `ffmpeg`/`ffprobe`, media decoding, frame/chunk creation, and local or remote ASR | Missing executable, malformed media, codec failure, gRPC status, or credential error; ASR failures may omit rows and log warnings instead of raising, so verify logs when output is unexpectedly empty |
@@ -342,6 +344,69 @@ This can occur when you send a versioned self-hosted model (for example `nvidia/
 To use hosted Build, omit `nemotron_parse_model` so the library selects `nvidia/nemotron-parse` automatically, or set `nemotron_parse_model="nvidia/nemotron-parse"` explicitly. Send `nvidia/nemotron-parse-v1.2` only to a compatible self-hosted chat endpoint.
 
 Do not combine hosted Build and self-hosted endpoints in one `nemotron_parse_invoke_url` list. The library rejects this configuration because one workflow cannot send different model IDs and request contracts to individual endpoints. Setting `nemotron_parse_model` does not override this restriction. Use a homogeneous endpoint list, or configure separate ingestors or extraction workflows for hosted Build and self-hosted capacity. For more information, refer to [Nemotron Parse: hosted Build and self-hosted NIM contracts](prerequisites-support-matrix.md#nemotron-parse-hosted-vs-self-hosted).
+
+## Fused extraction rejects a parameter combination { #fused-rejected-configuration }
+
+`ExtractParams(method="fused")` runs page elements detection, table structure
+reconstruction, OCR, and embedding as one GPU-resident model. `ExtractParams`
+validates the method against the rest of your configuration and raises a
+`ValueError`, which Pydantic reports as a `ValidationError`, before any
+pipeline work starts.
+
+The following table lists the rejected combinations and the corrective action.
+
+| Configuration with `method="fused"` | Why it fails | Corrective action |
+| --- | --- | --- |
+| `page_elements_invoke_url`, `ocr_invoke_url`, or `table_structure_invoke_url` is set | The fused model runs all four stages locally on the GPU and cannot delegate a stage to a NIM. The message names each offending field. | Remove the named per-stage invoke URLs, or select `pdfium_hybrid` or `ocr` when you need remote NIM stages. |
+| `use_page_elements=False` | Layout detection happens inside the fused model, so you cannot disable it. | Remove `use_page_elements=False`. If you need a text-only ingest without layout detection, select `method="pdfium"` and keep `use_page_elements=False` there. |
+
+For example, setting an OCR endpoint with the fused method fails with a message
+similar to the following:
+
+```text
+`method='fused'` runs page elements, table structure, OCR, and embedding as a
+single local GPU model and cannot delegate a stage to a NIM; remove:
+ocr_invoke_url.
+```
+
+`extract_page_as_image` behaves differently. `ExtractParams` does not reject
+it. The model forces the field to `True` in fused mode because the fused model
+reads the page raster directly, so the upstream PDF stage renders a page image
+even when you pass `extract_page_as_image=False`. If you require page images to
+stay off, use another extraction method.
+
+Exception wording is not a stable API field. Match on the parameter names in
+your configuration rather than on the message text. For the full contract,
+refer to
+[Run fused GPU-resident PDF extraction](nemo-retriever-api-reference.md#fused-gpu-resident-extraction).
+
+## Fused extraction reports a missing fused model package { #fused-missing-package }
+
+When you run PDF extraction with `method="fused"` and the optional fused model
+package is not installed, the fused actor fails with an error similar to the
+following:
+
+```text
+ImportError: method='fused' requires the `nemo_retriever_fused` package, which
+is not installed. Install it from the in-repo project:
+`pip install ./uber_model/nemo-retriever`.
+```
+
+The fused model is a separate, optional package. It is not part of the base
+`nemo-retriever` install or the `[local]` extra, and it is not published to
+PyPI or the Hugging Face Hub. It currently lives in the NeMo Retriever
+repository under `uber_model/nemo-retriever/`, so install it from a checkout of
+the repository:
+
+```bash
+pip install ./uber_model/nemo-retriever
+```
+
+Install the package into the same Python environment that runs the extraction
+worker, not only the client shell. In Ray batch mode, every worker that hosts a
+fused actor needs the package. Refer to
+[Fused extraction tuning](performance_guide.md#fused-extraction-tuning) for how
+the fused stage is scheduled.
 
 ## Hosted Page Elements NIM image size limits { #hosted-page-elements-nim-image-size-limits }
 

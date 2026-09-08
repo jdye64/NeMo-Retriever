@@ -17,6 +17,7 @@ from nemo_retriever.graph.ingestor_runtime import (
     batch_tuning_to_node_overrides,
     build_graph,
     build_post_extract_graph,
+    fused_absorbs_embed,
     default_concurrency_node_names,
     _image_embedding_requires_page_image,
 )
@@ -135,6 +136,7 @@ class ExtractionBranchExecutor:
             webhook_params=self.webhook_params,
             stage_order=self.post_extract_order,
             reshape_content_before_embed=self._should_reshape_content_before_embed(),
+            embed_absorbed_upstream=self._embed_absorbed_upstream(),
         )
         post_overrides = batch_tuning_to_node_overrides(
             None,
@@ -189,6 +191,7 @@ class ExtractionBranchExecutor:
             webhook_params=self.webhook_params,
             stage_order=self.post_extract_order,
             reshape_content_before_embed=self._should_reshape_content_before_embed(),
+            embed_absorbed_upstream=self._embed_absorbed_upstream(),
         )
         return InprocessExecutor(
             post_graph, show_progress=self.show_progress, trace_detail=self.trace_detail
@@ -196,6 +199,21 @@ class ExtractionBranchExecutor:
 
     def _should_reshape_content_before_embed(self) -> bool:
         return any(branch.family in {"pdf", "image"} for branch in self.branches)
+
+    def _embed_absorbed_upstream(self) -> bool:
+        """Return whether every branch already embedded inside its fused stage.
+
+        Branches are unioned before the post-extraction stages run, so a mixed
+        corpus where only some branches are fused still needs the embed stage
+        for the rest. Absorbing is only safe when no branch left rows
+        unembedded.
+        """
+        if self.embed_params is None or not self.branches:
+            return False
+        return all(
+            fused_absorbs_embed(self._resolve_branch(branch).extract_params, self.embed_params)
+            for branch in self.branches
+        )
 
     def _resolve_branch(self, branch: ExtractionBranchPlan) -> ResolvedExtractionInputs:
         resolved = resolve_branch_extraction_inputs(

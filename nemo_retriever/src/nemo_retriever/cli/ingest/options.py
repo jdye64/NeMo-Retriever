@@ -56,7 +56,8 @@ MethodOption = Annotated[
         help=(
             "PDF text extraction method: pdfium uses native PDF text only; pdfium_hybrid uses native text "
             "with OCR for scanned pages (the auto-profile default); ocr uses OCR for every page; "
-            "nemotron_parse uses the Nemotron Parse visual extraction path."
+            "nemotron_parse uses the Nemotron Parse visual extraction path; fused runs page elements, "
+            "table structure, OCR, and embedding as a single GPU-resident model."
         ),
     ),
 ]

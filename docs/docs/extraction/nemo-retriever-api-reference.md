@@ -45,10 +45,10 @@ streaming methods can yield no results.
 ### Select a supported extraction method
 
 `ExtractParams` validates `method` when you construct the model. For PDF
-extraction, use `pdfium`, `pdfium_hybrid`, `ocr`, or `nemotron_parse`. The
-`audio` value remains available for the legacy params-driven audio path. For
-new audio pipelines, use [`GraphIngestor.extract_audio()`](#graph-ingestor)
-instead.
+extraction, use `pdfium`, `pdfium_hybrid`, `ocr`, `nemotron_parse`, or `fused`.
+The default is `pdfium`. The `audio` value remains available for the legacy
+params-driven audio path. For new audio pipelines, use
+[`GraphIngestor.extract_audio()`](#graph-ingestor) instead.
 
 Any other value raises a Pydantic `ValidationError` before pipeline setup. The
 error lists the supported values, so spelling and configuration errors do not
@@ -61,6 +61,68 @@ For local `nemotron_parse` extraction in NeMo Retriever Library 26.08, omit
 execution. To use a remote Nemotron Parse endpoint, configure
 `nemotron_parse_invoke_url` or `invoke_url` and select the model that matches
 the endpoint contract.
+
+### Run fused GPU-resident PDF extraction { #fused-gpu-resident-extraction }
+
+`method="fused"` replaces four pipeline stages with a single GPU-resident
+model. That model performs page elements detection, table structure
+reconstruction, optical character recognition (OCR), and embedding in one
+process. It decodes each page raster once into device memory and keeps the
+intermediate tensors on the GPU, so the pipeline does not copy page images
+across the PCI Express bus between those stages.
+
+Select the method on `ExtractParams`:
+
+```python
+from nemo_retriever import create_ingestor
+from nemo_retriever.common.params import ExtractParams
+
+result = (
+    create_ingestor(run_mode="batch")
+    .files(["data/multimodal_test.pdf"])
+    .extract(ExtractParams(method="fused"))
+    .ingest()
+)
+```
+
+`method="fused"` works with `run_mode="inprocess"` and `run_mode="batch"`, and
+you can select it in the Retriever service. It is a value of `method`, not a
+run mode.
+
+The fused model produces embeddings directly, so the separate batch embed stage
+does not run while `method="fused"` is active. Continue to configure embedding
+behavior with `EmbedParams`.
+
+The fused model runs every stage locally on the GPU, so `ExtractParams` rejects
+configurations that contradict that design. Each of the following raises a
+`ValueError` during model validation, which Pydantic reports as a
+`ValidationError` when you construct the model:
+
+- Setting `page_elements_invoke_url`, `ocr_invoke_url`, or
+  `table_structure_invoke_url`. The fused model cannot delegate a stage to a
+  NIM.
+- Setting `use_page_elements=False`. Layout detection happens inside the fused
+  model.
+
+`ExtractParams` does not reject `extract_page_as_image`. It forces the field to
+`True` in fused mode, because the fused model reads the page raster directly.
+This applies even when you pass `extract_page_as_image=False`.
+
+Tune the fused stage with `FusedTuningParams` on `ExtractParams.fused_tuning`.
+Import the model from `nemo_retriever.common.params`. Because the fused stage
+holds the whole model stack in one process, you tune it as one actor pool
+instead of tuning the four stages separately with `BatchTuningParams`. Refer to
+[Fused extraction tuning](performance_guide.md#fused-extraction-tuning).
+
+The fused model comes from the separate, optional `nemo_retriever_fused`
+package. It is not part of the `nemo-retriever` install or the `local` extra,
+and it is not published to PyPI or the Hugging Face Hub. It currently lives in
+the NeMo Retriever repository under `uber_model/nemo-retriever/`, so install it
+from a checkout of the repository with
+`pip install ./uber_model/nemo-retriever`. NeMo Retriever Library imports the
+package lazily, so the fused actor raises an `ImportError` with installation
+guidance when the package is not installed. Refer to
+[Fused extraction reports a missing fused model package](troubleshoot.md#fused-missing-package).
 
 ### Choose raise or collect behavior
 

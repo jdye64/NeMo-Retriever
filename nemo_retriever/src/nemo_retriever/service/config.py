@@ -44,6 +44,16 @@ class LocalExtractConfig(RichModel):
     use_table_structure: bool = True
     ocr_version: Literal["v1", "v2"] = "v2"
     ocr_lang: Literal["multi", "english"] | None = None
+    method: Literal["pdfium", "pdfium_hybrid", "ocr", "fused"] = Field(
+        default="pdfium",
+        description=(
+            "PDF extraction method for in-pod extraction. 'fused' replaces the "
+            "page-elements, table-structure, OCR, and embed stages with a single "
+            "GPU-resident model and requires the optional nemo_retriever_fused "
+            "package. NIM endpoints take precedence over local models, so 'fused' "
+            "is ignored when a per-stage NIM URL is configured."
+        ),
+    )
 
 
 class LocalEmbedConfig(RichModel):

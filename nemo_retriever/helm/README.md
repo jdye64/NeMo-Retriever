@@ -782,6 +782,7 @@ client entrypoint. Refer to [Health probes](#health-probes).
 | `serviceConfig.nimEndpoints.rerankInvokeUrl`      | `""`    | Ranking API URL used by `POST /v1/query` when `rerank=true`. Auto-wired from the optional `rerankqa` NIM when enabled; override to point at a hosted or external ranking endpoint. |
 | `serviceConfig.nimEndpoints.rerankModelName`      | `""`    | Model ID sent to the ranking API. Auto-set to `nvidia/llama-nemotron-rerank-vl-1b-v2` whenever a rerank URL is resolved; override for a different compatible reranker. |
 | `serviceConfig.nimEndpoints.audioGrpcEndpoint`    | `""`    | gRPC endpoint for Parakeet ASR. Not auto-wired from `nimOperator.audio`. Set `audio:50051` when you enable the audio NIM. |
+| `serviceConfig.localModels.extract.method`        | `pdfium` | PDF extraction method for in-pod extraction, rendered as `local_models.extract.method` in the ConfigMap. Accepts `pdfium`, `pdfium_hybrid`, `ocr`, and `fused`. The default preserves current behavior. Set `fused` to run page elements, table structure, OCR, and embedding as one GPU-resident model. Refer to [Fused extraction in the service](#local-models-fused-extraction). |
 | `serviceConfig.llm.enabled`                         | `false` | Enables `POST /v1/answer`. Auto-flips to true when `nimOperator.answer_llm` is enabled and the operator URL resolves. |
 | `serviceConfig.llm.apiBase`                         | `""`    | OpenAI-compatible LLM base URL. Explicit value wins; otherwise `answer_llm` opt-in resolves to `http://answer-llm:8000/v1` by default. |
 | `serviceConfig.llm.apiKeySecret.name`                | `""`    | Optional Secret name for external LLM credentials. Explicit values win; otherwise operator-managed `answer_llm` mounts its `authSecret` as `NEMO_RETRIEVER_LLM_API_KEY` so LiteLLM/OpenAI has a credential value without writing it to the ConfigMap. |
@@ -803,6 +804,44 @@ client entrypoint. Refer to [Health probes](#health-probes).
 | `serviceConfig.vectordb.embedModel`               | `nvidia/llama-nemotron-embed-vl-1b-v2` | Passed to vectordb + worker `embed_model_name`. |
 | `serviceConfig.vectordb.embedModelProviderPrefix` | `""` | Optional LiteLLM provider prefix prepended to the remote embed model name. |
 | `serviceConfig.vectordb.writeTimeoutSeconds`      | `300` | Rendered as `vectordb.write_timeout_s`. How long a worker waits for the vectordb Pod to acknowledge a record write. A write that is not acknowledged fails the document, so raise this value on slow storage. Refer to [Timeouts and alleviating ingest failures](#timeouts-and-alleviating-ingest-failures). |
+
+#### Fused extraction in the service { #local-models-fused-extraction }
+
+`serviceConfig.localModels.extract.method` selects the PDF extraction method
+for in-pod extraction. The supported values are `pdfium`, `pdfium_hybrid`,
+`ocr`, and `fused`. The default is `pdfium`, which preserves current behavior.
+The value is a sibling of `serviceConfig.localModels.extract.ocrVersion` and
+applies only when `serviceConfig.localModels.enabled=true`.
+
+Set the value to `fused` to run page elements, table structure, OCR, and
+embedding as a single GPU-resident model instead of four separate stages:
+
+```yaml
+serviceConfig:
+  localModels:
+    enabled: true
+    extract:
+      method: fused
+```
+
+Fused extraction has the following requirements:
+
+- A GPU-enabled service image that includes the optional `nemo_retriever_fused`
+  package. That package is not part of the base `nemo-retriever` install or the
+  `local` extra, and it is not published to PyPI or the Hugging Face Hub. Build
+  the image with `pip install ./uber_model/nemo-retriever` from a checkout of
+  the repository.
+- A GPU available to each worker Pod that runs extraction.
+- No per-stage NIM endpoint that overrides a fused stage. NIM URLs take
+  precedence over local models, so the service ignores `method: fused` when
+  `serviceConfig.nimEndpoints.pageElementsInvokeUrl`,
+  `serviceConfig.nimEndpoints.ocrInvokeUrl`, or
+  `serviceConfig.nimEndpoints.tableStructureInvokeUrl` is set. Clear those
+  values when you want fused extraction to run.
+
+Keep `method: pdfium` and the NIM Operator sub-stack when you want remote NIM
+stages. For the Python contract and validation rules, refer to
+[Run fused GPU-resident PDF extraction](https://github.com/NVIDIA/NeMo-Retriever/blob/main/docs/docs/extraction/nemo-retriever-api-reference.md#fused-gpu-resident-extraction).
 
 ### Sidecar metadata in split topology
 

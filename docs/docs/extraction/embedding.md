@@ -12,6 +12,10 @@ The model can embed documents in the form of an image, text, or a combination of
 Documents can then be retrieved given a user query in text form. 
 The model supports images that contain text, tables, charts, and infographics.
 
+!!! note "Fused extraction produces embeddings in the extract stage"
+
+    When you set `ExtractParams(method="fused")`, the fused GPU-resident model emits embeddings directly and the separate batch embed stage does not run. Continue to configure embedding behavior with `EmbedParams`. Refer to [Run fused GPU-resident PDF extraction](nemo-retriever-api-reference.md#fused-gpu-resident-extraction).
+
 ## Example with Default Text-Based Embedding { #example-with-default-text-based-embedding }
 
 When you use the multimodal model, by default, all extracted content (text, tables, charts) is treated as plain text. 
