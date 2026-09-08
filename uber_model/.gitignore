@@ -1,0 +1,13 @@
+# Mirrored HuggingFace snapshots. Roughly 8.7 GB across six repos, and every
+# file is reproducible from `download_models.py` at a pinned revision, so the
+# mirror is deliberately not tracked.
+huggingface/
+
+# Python build and cache artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
