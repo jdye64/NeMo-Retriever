@@ -33,6 +33,7 @@ from nemo_retriever.common.params import (
     VideoFrameTextDedupParams,
     build_embed_option_kwargs,
 )
+from nemo_retriever.common.tracing import VALID_TRACE_DETAILS
 from nemo_retriever.common.input_files import (
     AUTO_INPUT_EXTENSIONS,
     INPUT_TYPE_EXTENSIONS,
@@ -89,6 +90,15 @@ class IngestRuntimeOptions:
     run_mode: IngestRunModeValue = "inprocess"
     ray_address: str | None = None
     ray_log_to_driver: bool | None = None
+
+
+@dataclass(frozen=True)
+class IngestTraceOptions:
+    """Per-page trace options. ``page_trace_detail`` unset defers to the
+    ``NEMO_RETRIEVER_PAGE_TRACE_DETAIL`` environment variable."""
+
+    page_trace_dir: str | None = None
+    page_trace_detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -226,6 +236,7 @@ class IngestPlanRequest:
     embed: IngestEmbedOptions = field(default_factory=IngestEmbedOptions)
     image_store: IngestImageStoreOptions = field(default_factory=IngestImageStoreOptions)
     storage: IngestStorageOptions = field(default_factory=IngestStorageOptions)
+    trace: IngestTraceOptions = field(default_factory=IngestTraceOptions)
 
 
 def _validate_run_mode(run_mode: str) -> IngestRunModeValue:
@@ -238,6 +249,15 @@ def validate_ingest_input_type(input_type: str) -> IngestInputTypeValue:
     if input_type not in _SUPPORTED_INPUT_TYPES:
         raise ValueError(f"input_type must be one of {', '.join(_SUPPORTED_INPUT_TYPES)}, got {input_type!r}.")
     return cast(IngestInputTypeValue, input_type)
+
+
+def validate_page_trace_detail(detail: str | None) -> str | None:
+    """Validate a page trace detail level, allowing ``None`` for "unset"."""
+    if detail is None:
+        return None
+    if detail not in VALID_TRACE_DETAILS:
+        raise ValueError(f"page_trace_detail must be one of {', '.join(VALID_TRACE_DETAILS)}, got {detail!r}.")
+    return detail
 
 
 def validate_ingest_profile(profile: str) -> IngestProfileValue:
@@ -313,6 +333,8 @@ class ResolvedIngestPlan:
     lancedb_uri: str
     table_name: str
     sparse: bool = False
+    page_trace_dir: str | None = None
+    page_trace_detail: str | None = None
 
     def extract_call_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {}
@@ -763,4 +785,6 @@ def resolve_ingest_plan(request: IngestPlanRequest) -> ResolvedIngestPlan:
         lancedb_uri=storage.lancedb_uri,
         table_name=storage.table_name,
         sparse=resolved_index_mode == "sparse",
+        page_trace_dir=request.trace.page_trace_dir,
+        page_trace_detail=validate_page_trace_detail(request.trace.page_trace_detail),
     )

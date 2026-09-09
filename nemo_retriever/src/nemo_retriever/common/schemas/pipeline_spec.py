@@ -98,6 +98,17 @@ class PipelineSpec(RichModel):
         default=False,
         description="Include raw image payload values in legacy transport rows.",
     )
+    page_trace_detail: Literal["off", "operator", "full"] = Field(
+        default="off",
+        description=(
+            "Per-page execution trace detail recorded by the worker. "
+            "'operator' times each pipeline stage; 'full' adds network, GPU, and "
+            "heavy dependency spans inside stages; 'off' disables tracing. "
+            "Defaults to 'off' because a service trace travels back on every "
+            "status response, so clients opt in rather than pay for one they "
+            "will not read. The local run modes trace at 'operator' by default."
+        ),
+    )
 
     def is_empty(self) -> bool:
         """``True`` when the client supplied no overrides and no stage_order.
@@ -120,4 +131,5 @@ class PipelineSpec(RichModel):
             and self.result_schema == "legacy"
             and not self.return_embeddings
             and not self.return_images
+            and self.page_trace_detail == "off"
         )

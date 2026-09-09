@@ -72,6 +72,8 @@ Methods that intentionally remain unsupported in service run_mode:
 from __future__ import annotations
 
 import asyncio
+import gzip
+import json
 import logging
 import queue
 import threading
@@ -87,6 +89,12 @@ import httpx
 from nemo_retriever.ingestor.results import ResultSchema, concat_ingest_results
 from nemo_retriever.ingestor import _merge_params, ingestor
 from nemo_retriever.common.inline_text import inline_text_source_id, is_blank_inline_corpus, normalize_inline_texts
+from nemo_retriever.common.tracing import (
+    DEFAULT_TRACE_DETAIL,
+    trace_filename,
+)
+from nemo_retriever.common.tracing.runtime import get_detail as get_trace_detail
+from nemo_retriever.common.tracing.runtime import normalize_detail as normalize_trace_detail
 from nemo_retriever.common.params import (
     CaptionParams,
     IngestExecuteParams,
@@ -460,6 +468,12 @@ class ServiceIngestor(ingestor):
         self._save_to_disk_dir: Path | None = None
         self._save_to_disk_compression: str | None = None
         self._save_to_disk_cleanup: bool = True
+        # Page tracing: the detail level travels to the worker on the pipeline
+        # spec, and traces come back on the document status response. Off until
+        # a run asks for traces, since the artifact rides that response.
+        self._page_trace_detail_active: str = "off"
+        self._collect_page_traces: bool = False
+        self._page_traces: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Pipeline-spec helpers
@@ -495,6 +509,27 @@ class ServiceIngestor(ingestor):
             with self._new_result_fetch_client() as scoped_client:
                 return self._fetch_document_result_data(document_id, client=scoped_client)
 
+        return list(self._fetch_document_status_body(document_id, client=client).get("result_data") or [])
+
+    def _fetch_document_status_body(
+        self,
+        document_id: str,
+        *,
+        client: httpx.Client | None = None,
+    ) -> dict[str, Any]:
+        """Fetch the full status body for *document_id*.
+
+        Result rows and the page trace both arrive on this response, so
+        callers that need both should read them from one body rather than
+        issuing a second round-trip.
+        """
+        if not document_id:
+            raise ValueError("_fetch_document_status_body(): empty document_id")
+
+        if client is None:
+            with self._new_result_fetch_client() as scoped_client:
+                return self._fetch_document_status_body(document_id, client=scoped_client)
+
         url = f"{self._base_url}/v1/ingest/status/{document_id}"
         try:
             resp = client.get(url)
@@ -508,7 +543,25 @@ class ServiceIngestor(ingestor):
                 resp = retry_client.get(url)
         resp.raise_for_status()
         body = resp.json()
-        return list(body.get("result_data") or [])
+        return body if isinstance(body, dict) else {}
+
+    def _write_page_trace_to_disk(self, document_id: str, page_trace: dict[str, Any]) -> Path:
+        """Write *page_trace* for *document_id* into the configured directory."""
+        if self._page_trace_dir is None:
+            raise RuntimeError("_write_page_trace_to_disk(): save_page_traces was never enabled")
+
+        directory = Path(self._page_trace_dir).expanduser()
+        directory.mkdir(parents=True, exist_ok=True)
+        # Named by attempt id so trace files line up with the result files
+        # written by save_to_disk() for the same document.
+        out_path = directory / trace_filename(document_id, compression=self._page_trace_compression)
+        payload = json.dumps(page_trace, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+        if self._page_trace_compression == "gzip":
+            with gzip.open(out_path, "wb") as handle:
+                handle.write(payload)
+        else:
+            out_path.write_bytes(payload)
+        return out_path
 
     def _write_result_data_to_disk(self, document_id: str, result_data: list[dict[str, Any]]) -> Path:
         """Write *result_data* for *document_id* to the configured output directory."""
@@ -554,12 +607,33 @@ class ServiceIngestor(ingestor):
         return_results: bool,
         client: httpx.Client | None = None,
     ) -> list[dict[str, Any]] | None:
-        """Fetch (once) and optionally persist rows for a completed document."""
-        if not return_results and self._save_to_disk_dir is None:
+        """Fetch (once) and optionally persist rows for a completed document.
+
+        Also captures the document's page trace from the same status response,
+        persisting it when :meth:`save_page_traces` configured a directory.
+        """
+        wants_trace = self._page_trace_dir is not None or self._collect_page_traces
+        if not return_results and self._save_to_disk_dir is None and not wants_trace:
             return None
-        result_data = self._fetch_document_result_data(document_id, client=client)
+
+        body = self._fetch_document_status_body(document_id, client=client)
+        result_data = list(body.get("result_data") or [])
         if self._save_to_disk_dir is not None:
             self._write_result_data_to_disk(document_id, result_data)
+
+        page_trace = body.get("page_trace")
+        if isinstance(page_trace, dict) and page_trace:
+            # Retained whenever one arrives, not only when the caller asked for
+            # it on the return value, so ``page_traces`` reads the same here as
+            # it does in the local run modes.
+            self._page_traces.append(page_trace)
+            if self._page_trace_dir is not None:
+                # A missing trace must not fail an otherwise successful
+                # document, so persistence failures are logged, not raised.
+                try:
+                    self._write_page_trace_to_disk(document_id, page_trace)
+                except OSError:
+                    logger.warning("Failed to write page trace for %s", document_id, exc_info=True)
         return result_data if return_results else None
 
     def _pipeline_payload(
@@ -580,6 +654,7 @@ class ServiceIngestor(ingestor):
         spec["result_schema"] = result_schema
         spec["return_embeddings"] = bool(return_embeddings or spec.get("return_embeddings", False))
         spec["return_images"] = bool(return_images or spec.get("return_images", False))
+        spec["page_trace_detail"] = self._page_trace_detail_active
         is_empty = (
             spec.get("extraction_mode", "auto") in ("pdf", "auto")
             and not spec.get("stage_order")
@@ -600,6 +675,7 @@ class ServiceIngestor(ingestor):
             and spec.get("result_schema", "legacy") == "legacy"
             and not spec.get("return_embeddings", False)
             and not spec.get("return_images", False)
+            and spec.get("page_trace_detail", "off") == "off"
         )
         return None if is_empty else spec
 
@@ -1116,9 +1192,17 @@ class ServiceIngestor(ingestor):
         result_schema: ResultSchema,
         return_embeddings: bool,
         return_images: bool,
+        need_result_client: bool | None = None,
     ) -> Iterator[tuple[dict[str, Any], httpx.Client | None]]:
-        """Yield ingest events while owning the optional shared result client."""
-        client_context = self._new_result_fetch_client() if retain_results else nullcontext(None)
+        """Yield ingest events while owning the optional shared result client.
+
+        ``need_result_client`` opens the status-fetch client without asking the
+        server to retain result rows, which is what a run that wants only page
+        traces needs.
+        """
+        if need_result_client is None:
+            need_result_client = retain_results
+        client_context = self._new_result_fetch_client() if need_result_client else nullcontext(None)
         with client_context as result_client:
             for evt in self.ingest_stream(
                 retain_results=retain_results,
@@ -1170,25 +1254,38 @@ class ServiceIngestor(ingestor):
             When using legacy result rows, include embedding vectors and
             raw image payloads instead of stripping them from transport
             cells. Defaults remain ``False`` to avoid large responses.
+        page_trace_detail
+            ``"off"``, ``"operator"`` (default), or ``"full"``. Sent to
+            the server on the pipeline spec, so the detail level applies
+            to the worker that actually runs the pipeline.
+        return_page_traces
+            Append the per-document page traces to the returned tuple.
+            Also available afterwards on :attr:`page_traces`, and written
+            to disk when
+            :meth:`~nemo_retriever.ingestor.core.ingestor.save_page_traces`
+            configured a directory.
 
         Returns
         -------
         ServiceIngestResult
-            When neither ``return_failures`` nor ``return_traces`` is
-            set — a list subclass of per-document completion events with
-            extra ``job_id`` / ``failures`` / ``document_ids`` /
-            ``elapsed_s`` / ``job_status`` / ``dataframe`` attributes.
+            When no ``return_*`` extras are set — a list subclass of
+            per-document completion events with extra ``job_id`` /
+            ``failures`` / ``document_ids`` / ``elapsed_s`` /
+            ``job_status`` / ``dataframe`` attributes.
         tuple
-            With ``return_failures=True`` only — ``(result, failures)``.
-            With ``return_traces=True`` only — ``(result, traces)``.
-            With both — ``(result, failures, traces)``.  ``failures``
-            mirrors ``result.failures``; ``traces`` is the ordered list
-            of raw SSE event dicts observed during the run, useful for
-            debugging pipeline behaviour without re-running the job.
+            ``(result, *extras)`` where extras appear in the fixed order
+            ``failures``, ``traces``, ``page_traces`` for whichever of
+            ``return_failures`` / ``return_traces`` /
+            ``return_page_traces`` were requested. ``failures`` mirrors
+            ``result.failures``; ``traces`` is the ordered list of raw
+            SSE event dicts observed during the run, useful for debugging
+            pipeline behaviour without re-running the job;
+            ``page_traces`` is one document trace dict per document.
         """
         return_failures, return_traces, return_results, result_schema, return_embeddings, return_images = (
             self._resolve_execute_flags(params, kwargs)
         )
+        return_page_traces = self._apply_page_trace_flags(params, kwargs)
         del params, kwargs
         self._validate_input_sources(self._inline_texts)
         if not self._documents and not self._buffers and is_blank_inline_corpus(self._inline_texts):
@@ -1198,11 +1295,14 @@ class ServiceIngestor(ingestor):
             result = ServiceIngestResult()
             if return_results:
                 result.dataframe = _empty_service_result_dataframe(result_schema)
-            if return_failures and return_traces:
-                return result, [], []
-            if return_failures or return_traces:
-                return result, []
-            return result
+            extras: list[Any] = []
+            if return_failures:
+                extras.append([])
+            if return_traces:
+                extras.append([])
+            if return_page_traces:
+                extras.append([])
+            return (result, *extras) if extras else result
 
         retain_results = return_results or self._save_to_disk_dir is not None
         if retain_results and result_schema == "legacy":
@@ -1216,11 +1316,13 @@ class ServiceIngestor(ingestor):
         documents_failed = 0
         total_uploaded = 0
 
+        wants_page_traces = return_page_traces or self._page_trace_dir is not None
         for evt, result_client in self._ingest_events_with_result_client(
             retain_results=retain_results,
             result_schema=result_schema,
             return_embeddings=return_embeddings,
             return_images=return_images,
+            need_result_client=retain_results or wants_page_traces,
         ):
             if return_traces:
                 traces.append(evt)
@@ -1275,7 +1377,7 @@ class ServiceIngestor(ingestor):
                 else:
                     documents_completed += 1
                     doc_id = evt.get("document_id", "")
-                    if return_results or self._save_to_disk_dir is not None:
+                    if return_results or self._save_to_disk_dir is not None or wants_page_traces:
                         try:
                             rows = self._materialize_completed_document(
                                 doc_id,
@@ -1318,13 +1420,14 @@ class ServiceIngestor(ingestor):
         # backwards compatible — get_status() still uses document_ids).
         self._last_job_id = result.job_id
 
-        if return_failures and return_traces:
-            return result, list(result.failures), traces
+        extras: list[Any] = []
         if return_failures:
-            return result, list(result.failures)
+            extras.append(list(result.failures))
         if return_traces:
-            return result, traces
-        return result
+            extras.append(traces)
+        if return_page_traces:
+            extras.append(list(self._page_traces))
+        return (result, *extras) if extras else result
 
     @staticmethod
     def _normalize_result_schema(value: Any) -> ResultSchema:
@@ -1387,6 +1490,51 @@ class ServiceIngestor(ingestor):
             bool(kwargs["return_images"]) if "return_images" in kwargs else _from_params("return_images", default=False)
         )
         return return_failures, return_traces, return_results, result_schema, return_embeddings, return_images
+
+    def _apply_page_trace_flags(self, params: Any, kwargs: dict[str, Any]) -> bool:
+        """Resolve page-trace options for one ``ingest()`` call.
+
+        Records the detail level that the server should use on
+        ``_page_trace_detail_active`` (read when building the pipeline spec)
+        and returns whether traces should be appended to the result tuple.
+
+        Unlike the local run modes, where an always-on trace costs nothing to
+        keep in process, a service trace has to travel back on every status
+        response. So the server is asked for one only when this run actually
+        wants it, either to return it or to write it to disk.
+        """
+
+        def _value(name: str, default: Any) -> Any:
+            if name in kwargs:
+                return kwargs[name]
+            if isinstance(params, IngestExecuteParams):
+                return getattr(params, name, default)
+            if isinstance(params, dict):
+                return params.get(name, default)
+            return default
+
+        return_page_traces = bool(_value("return_page_traces", False))
+        detail = _value("page_trace_detail", None)
+        wants_trace = return_page_traces or self._page_trace_dir is not None
+        if detail is not None:
+            resolved = normalize_trace_detail(detail)
+        elif wants_trace:
+            resolved = get_trace_detail()
+        else:
+            resolved = "off"
+        # Saving or returning traces is meaningless with tracing off, so an
+        # explicit request implies at least operator-level detail.
+        if resolved == "off" and wants_trace:
+            resolved = DEFAULT_TRACE_DETAIL
+        self._page_trace_detail_active = resolved
+        self._collect_page_traces = return_page_traces
+        self._page_traces = []
+        return return_page_traces
+
+    @property
+    def page_traces(self) -> list[dict[str, Any]]:
+        """Document traces captured by the most recent ``ingest()`` call."""
+        return list(self._page_traces)
 
     # ------------------------------------------------------------------
     # Execution — sync streaming

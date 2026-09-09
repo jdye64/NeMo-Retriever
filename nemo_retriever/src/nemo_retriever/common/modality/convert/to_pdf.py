@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from nemo_retriever.common.tracing.spans import span as trace_span
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 from nemo_retriever.operators.cpu_operator import CPUOperator
 from nemo_retriever.graph.designer import designer_component
@@ -90,7 +91,13 @@ def convert_to_pdf_bytes(file_bytes: bytes, extension: str) -> bytes:
             tmp_dir,
         ]
 
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        with trace_span(
+            "libreoffice.convert_to_pdf",
+            category="io",
+            detail="full",
+            attrs={"extension": ext, "input_bytes": len(file_bytes)},
+        ):
+            subprocess.run(command, check=True, capture_output=True, text=True)
 
         pdf_path = os.path.join(tmp_dir, "input.pdf")
         if not os.path.exists(pdf_path):

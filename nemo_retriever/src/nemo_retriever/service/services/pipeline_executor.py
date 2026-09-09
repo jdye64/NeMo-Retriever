@@ -746,7 +746,7 @@ def _run_pipeline_in_process(
     job_id: str | None = None,
     internal_api_token: str | None = None,
     vectordb_write_timeout_s: float = _DEFAULT_VECTORDB_WRITE_TIMEOUT_S,
-) -> tuple[int, list[dict[str, Any]], float]:
+) -> tuple[int, list[dict[str, Any]], float, dict[str, Any] | None]:
     """Execute one pipeline run inside a child process.
 
     This is a **top-level module function** so it can be pickled by
@@ -765,6 +765,7 @@ def _run_pipeline_in_process(
     When ``pipeline_spec`` is ``None`` (or empty) the behaviour exactly
     matches the original closure-baked pipeline.
     """
+    from nemo_retriever.common.tracing import normalize_detail as normalize_trace_detail
     from nemo_retriever.service import tracing
 
     t0 = time.monotonic()
@@ -787,7 +788,24 @@ def _run_pipeline_in_process(
                 asr_params_dict,
             )
 
-            result_df = ingestor.ingest()
+            # Ask the ingestor for traces directly rather than reading the
+            # trace column off the result: the column is stripped before
+            # ``ingest()`` returns so client-facing rows stay clean.
+            #
+            # Tracing is opt-in here, unlike the local run modes: the artifact
+            # rides back on every status response for this document, so a
+            # client that did not ask must not be charged for it. An absent
+            # spec key therefore means off rather than the local default.
+            requested_detail = (pipeline_spec or {}).get("page_trace_detail")
+            page_trace_detail = normalize_trace_detail(requested_detail) if requested_detail else "off"
+            if page_trace_detail == "off":
+                result_df = ingestor.ingest()
+                page_traces: list[dict[str, Any]] = []
+            else:
+                result_df, page_traces = ingestor.ingest(
+                    page_trace_detail=page_trace_detail,
+                    return_page_traces=True,
+                )
             _merge_document_metadata(
                 result_df,
                 write_context.document_metadata if write_context is not None else None,
@@ -829,13 +847,24 @@ def _run_pipeline_in_process(
 
     result_options = pipeline_spec or {}
     result_schema = result_options.get("result_schema", "legacy")
+    # The page trace is returned as its own artifact rather than riding in
+    # ``result_data``: sanitization truncates long strings and the compact
+    # schema drops unknown columns, either of which would corrupt the JSON.
     result_data = _sanitize_result_data(
         result_df,
         result_schema=result_schema,
         return_embeddings=bool(result_options.get("return_embeddings", False)),
         return_images=bool(result_options.get("return_images", False)),
     )
-    return row_count, result_data, elapsed
+    page_trace = page_traces[0] if page_traces else None
+    if page_trace is not None:
+        # The worker drives an inprocess ingestor, so the aggregated trace
+        # would report that mode. Record the mode the caller actually used,
+        # otherwise service traces are indistinguishable from local ones.
+        run = page_trace.get("run")
+        if isinstance(run, dict):
+            run["run_mode"] = "service"
+    return row_count, result_data, elapsed, page_trace
 
 
 def _merge_document_metadata(result: Any, document_metadata: dict[str, Any] | None) -> None:
@@ -1037,7 +1066,7 @@ def _make_work_fn(
     config: ServiceConfig,
     *,
     label: str,
-) -> Callable[[WorkItem], Awaitable[tuple[int, list[dict[str, Any]]]]]:
+) -> Callable[[WorkItem], Awaitable[tuple[int, list[dict[str, Any]], dict[str, Any] | None]]]:
     """Factory that captures pipeline params once and returns an async worker.
 
     Each invocation creates a :class:`ProcessPoolExecutor` so that every
@@ -1120,7 +1149,7 @@ def _make_work_fn(
     # executor while the closure keeps a stable reference.
     executor_ref: list[ProcessPoolExecutor] = [executor]
 
-    async def _work(item: WorkItem) -> tuple[int, list[dict[str, Any]]]:
+    async def _work(item: WorkItem) -> tuple[int, list[dict[str, Any]], dict[str, Any] | None]:
         filename = item.filename or item.id
         loop = asyncio.get_running_loop()
 
@@ -1129,7 +1158,7 @@ def _make_work_fn(
 
         try:
             trace_context = _capture_trace_context_for_pipeline()
-            row_count, result_data, elapsed = await loop.run_in_executor(
+            row_count, result_data, elapsed, page_trace = await loop.run_in_executor(
                 executor_ref[0],
                 _run_pipeline_in_process,
                 filename,
@@ -1186,14 +1215,14 @@ def _make_work_fn(
             row_count,
             elapsed,
         )
-        return row_count, result_data
+        return row_count, result_data, page_trace
 
     return _work
 
 
 def create_realtime_work_fn(
     config: ServiceConfig,
-) -> Callable[[WorkItem], Awaitable[tuple[int, list[dict[str, Any]]]]]:
+) -> Callable[[WorkItem], Awaitable[tuple[int, list[dict[str, Any]], dict[str, Any] | None]]]:
     """Build the async work function for the **realtime** pool.
 
     Processes single pages — the extract operator finds one page and the
@@ -1204,7 +1233,7 @@ def create_realtime_work_fn(
 
 def create_batch_work_fn(
     config: ServiceConfig,
-) -> Callable[[WorkItem], Awaitable[tuple[int, list[dict[str, Any]]]]]:
+) -> Callable[[WorkItem], Awaitable[tuple[int, list[dict[str, Any]], dict[str, Any] | None]]]:
     """Build the async work function for the **batch** pool.
 
     Processes full documents — the extract operator splits internally

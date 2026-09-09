@@ -28,6 +28,7 @@ from nemo_retriever.ingest.plan import (
     IngestRuntimeOptions,
     IngestSourceOptions,
     IngestStorageOptions,
+    IngestTraceOptions,
     resolve_ingest_plan,
     validate_ingest_index_mode,
 )
@@ -162,6 +163,10 @@ def _build_storage_options(values: Mapping[str, Any]) -> IngestStorageOptions:
     return IngestStorageOptions(**_matching_option_values(values, IngestStorageOptions))
 
 
+def _build_trace_options(values: Mapping[str, Any]) -> IngestTraceOptions:
+    return IngestTraceOptions(**_matching_option_values(values, IngestTraceOptions))
+
+
 def _build_graph_ingest_request(values: Mapping[str, Any], *, run_mode: IngestRunModeValue) -> IngestPlanRequest:
     batch_enabled = run_mode == "batch"
     return IngestPlanRequest(
@@ -175,6 +180,7 @@ def _build_graph_ingest_request(values: Mapping[str, Any], *, run_mode: IngestRu
         embed=_build_embed_options(values, batch=_build_embed_batch_options(values, enabled=batch_enabled)),
         image_store=_build_image_store_options(values),
         storage=_build_storage_options(values),
+        trace=_build_trace_options(values),
     )
 
 
@@ -266,6 +272,8 @@ def _graph_ingest_command(
     embed_batch_size: opts.EmbedBatchSizeOption = None,
     embed_cpus_per_actor: opts.EmbedCpusPerActorOption = None,
     embed_gpus_per_actor: opts.EmbedGpusPerActorOption = None,
+    page_trace_dir: opts.PageTraceDirOption = None,
+    page_trace_detail: opts.PageTraceDetailOption = None,
     quiet: opts.QuietOption = True,
 ) -> None:
     parsed_options = dict(ctx.params)

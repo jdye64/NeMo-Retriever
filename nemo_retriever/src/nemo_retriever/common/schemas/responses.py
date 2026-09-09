@@ -57,6 +57,13 @@ class JobStatusResponse(RichModel):
     elapsed_s: float | None = None
     result_rows: int | None = None
     result_data: list[dict[str, Any]] | None = None
+    page_trace: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Per-page execution trace for this document. Present only when the "
+            "client requested page traces and the worker recorded one."
+        ),
+    )
     error: str | None = None
 
 
@@ -129,6 +136,13 @@ class DocumentStatusResponse(RichModel):
     filename: str | None = None
     result_rows: int | None = None
     result_data: list[dict[str, Any]] | None = None
+    page_trace: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Per-page execution trace for this document. Present only when the "
+            "client requested page traces and the worker recorded one."
+        ),
+    )
     error: str | None = None
     collection_name: str | None = None
     content_sha256: str | None = None

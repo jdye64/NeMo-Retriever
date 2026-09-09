@@ -11,7 +11,7 @@ import typer
 from nemo_retriever.cli.ingest import options as opts
 from nemo_retriever.cli.ingest.shared import run_cli_workflow
 from nemo_retriever.cli.ingest_workflow import run_service_ingest_workflow
-from nemo_retriever.ingest.plan import TableOutputFormatValue
+from nemo_retriever.ingest.plan import IngestTraceOptions, TableOutputFormatValue
 from nemo_retriever.ingest.service import (
     ServiceIngestCaptionOptions,
     ServiceIngestChunkOptions,
@@ -89,6 +89,8 @@ def _service_command(
     text_chunk: opts.TextChunkOption = False,
     text_chunk_max_tokens: opts.TextChunkMaxTokensOption = None,
     text_chunk_overlap_tokens: opts.TextChunkOverlapTokensOption = None,
+    page_trace_dir: opts.PageTraceDirOption = None,
+    page_trace_detail: opts.PageTraceDetailOption = None,
     quiet: Annotated[
         bool,
         typer.Option(
@@ -138,6 +140,7 @@ def _service_command(
             embed_granularity=embed_granularity,
         ),
         image_store=ServiceIngestImageStoreOptions(images_uri=store_images_uri),
+        trace=IngestTraceOptions(page_trace_dir=page_trace_dir, page_trace_detail=page_trace_detail),
     )
     run_cli_workflow(
         lambda: run_service_ingest_workflow(resolve_service_ingest_request(request), dry_run=dry_run),

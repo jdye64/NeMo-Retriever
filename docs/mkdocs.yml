@@ -101,6 +101,7 @@ nav:
   - "7. Deployment & operations":
       - "Ray and distributed ingest": extraction/ray-logging.md
       - "Batch resource sizing": extraction/performance_guide.md
+      - "Page tracing": extraction/page-tracing.md
   - "8. Customize & extend":
       - "Customize & extend": extraction/customize-extend.md
   - "9. Integrations & ecosystem":

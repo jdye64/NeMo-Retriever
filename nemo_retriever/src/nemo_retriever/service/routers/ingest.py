@@ -408,6 +408,21 @@ async def _fetch_result_data_from_workers(
     )
 
 
+async def _fetch_page_trace_from_workers(document_id: str) -> dict[str, Any] | None:
+    """Read a retained page trace, returning ``None`` when unavailable.
+
+    Unlike result rows, a missing trace never fails the request: tracing is
+    diagnostic and its absence is not an error the caller can act on.
+    """
+    from nemo_retriever.service.services.worker_result_store import get_page_trace
+
+    try:
+        return await asyncio.to_thread(get_page_trace, document_id)
+    except (ResultStoreTemporarilyUnavailable, OSError):
+        logger.debug("Retained page trace for %r is unavailable", document_id, exc_info=True)
+        return None
+
+
 def _worker_result_url(
     request: Request,
     document_id: str,
@@ -1027,7 +1042,7 @@ async def get_job(
 # ------------------------------------------------------------------
 
 
-def _document_to_response(rec, *, result_data=None) -> DocumentStatusResponse:
+def _document_to_response(rec, *, result_data=None, page_trace=None) -> DocumentStatusResponse:
     """Project a :class:`DocumentRecord` to the wire response shape."""
     return DocumentStatusResponse(
         document_id=rec.stable_document_id,
@@ -1041,6 +1056,7 @@ def _document_to_response(rec, *, result_data=None) -> DocumentStatusResponse:
         filename=rec.filename,
         result_rows=rec.result_rows,
         result_data=result_data,
+        page_trace=page_trace if page_trace is not None else getattr(rec, "page_trace", None),
         error=rec.error,
         collection_name=rec.collection_name,
         content_sha256=rec.content_sha256,
@@ -1152,7 +1168,12 @@ async def get_job_document(
         and _is_gateway(request)
     ):
         result_data = await _fetch_result_data_from_workers(document_id)
-    body = _document_to_response(rec, result_data=result_data).model_dump()
+    page_trace = rec.page_trace
+    if is_terminal and page_trace is None and _is_gateway(request):
+        # The trace may have landed in the retained store instead of on the
+        # record when the worker reported completion through a callback.
+        page_trace = await _fetch_page_trace_from_workers(document_id)
+    body = _document_to_response(rec, result_data=result_data, page_trace=page_trace).model_dump()
     return JSONResponse(content=body, status_code=200 if is_terminal else 202)
 
 
@@ -1495,6 +1516,10 @@ async def _status_response(request: Request, item_id: str) -> JSONResponse:
     ):
         result_data = await _fetch_result_data_from_workers(item_id)
 
+    page_trace = rec.page_trace
+    if is_terminal and page_trace is None and _is_gateway(request):
+        page_trace = await _fetch_page_trace_from_workers(item_id)
+
     body = JobStatusResponse(
         id=rec.id,
         status=rec.status.value,
@@ -1504,6 +1529,7 @@ async def _status_response(request: Request, item_id: str) -> JSONResponse:
         elapsed_s=rec.elapsed_s,
         result_rows=rec.result_rows,
         result_data=result_data,
+        page_trace=page_trace,
         error=rec.error,
     ).model_dump()
 

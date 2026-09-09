@@ -213,6 +213,32 @@ To reduce memory pressure, try one or more of the following:
 
 
 
+## Ingest completes but takes longer than expected { #ingest-slower-than-expected }
+
+A slow ingest does not raise an error, so start by measuring where the time goes instead of changing worker counts. NeMo Retriever Library traces every page as it moves through the pipeline and writes one trace file per document.
+
+Re-run the workload with tracing written to disk, then summarize it:
+
+```bash
+retriever ingest batch /path/to/your/pdfs \
+  --page-trace-dir traces/ \
+  --page-trace-detail full
+
+retriever trace traces/
+```
+
+Read the result as follows:
+
+- A dominant `network` share in the category table points at a remote NIM. Check endpoint latency, replica count, and HTTP `429` throttling.
+- A dominant `gpu` share points at local model inference. Check GPU utilization and batch sizes.
+- A large `Self` value in the operator table means the time is in a stage that is not yet instrumented at span level.
+- A few outlier pages in the slowest-pages table usually indicate unusual page content, such as very large images or dense tables, rather than a configuration problem.
+- An empty category table means the run recorded only operator spans, so confirm that you passed `--page-trace-detail full`.
+
+To drill into one slow page, run `retriever trace page traces/ --page N --document DOCUMENT_ID`. Sum `amortized_ms`, not `duration_ms`, when you aggregate spans yourself. Operators batch pages, so `duration_ms` repeats on every page that a batched span covered. For the detail levels, the trace file schema, and the full timing model, refer to [Page tracing](page-tracing.md). For resource sizing after you identify the bottleneck, refer to the [performance guide](performance_guide.md).
+
+
+
 ## Embedding service fails to start with an unsupported batch size error { #embedding-service-fails-unsupported-batch-size }
 
 On some GPUs, for example RTX 6000, a self-hosted embedding NIM can fail
@@ -643,6 +669,8 @@ For the copy-paste Helm values and CLI command, refer to [Self-hosted Helm Super
 - [Kubernetes Helm Storage Requirements](prerequisites-support-matrix.md#kubernetes-helm-storage-requirements)
 - [Kubernetes Helm GPU scheduling](prerequisites-support-matrix.md#kubernetes-helm-gpu-scheduling)
 - [Deployment options](deployment-options.md)
+- [Page tracing](page-tracing.md)
+- [Performance Guide](performance_guide.md)
 - [Deploy with Helm](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md)
 - [Changing a NIM image repository or tag](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#changing-nim-image-repository-or-tag)
 - [Use externally managed Secrets](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#use-externally-managed-secrets)

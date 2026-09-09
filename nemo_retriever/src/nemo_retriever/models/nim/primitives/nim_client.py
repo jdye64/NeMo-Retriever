@@ -24,6 +24,11 @@ import requests
 
 from nemo_retriever.common.api.internal.primitives.tracing.tagging import traceable_func
 from nemo_retriever.common.api.util.string_processing import generate_url
+from nemo_retriever.common.tracing.spans import (
+    current_parent_span_id,
+    model_span,
+    span as page_trace_span,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -250,8 +255,19 @@ class NimClient:
 
             return self._max_batch_sizes[model_name]
 
+    def _trace_endpoint(self) -> str | None:
+        """Return the endpoint this client talks to, for trace attribution."""
+        return self._grpc_endpoint if self.protocol == "grpc" else self._http_endpoint
+
     def _process_batch(
-        self, batch_input, *, batch_data, model_name, _trace_context: dict[str, str] | None = None, **kwargs
+        self,
+        batch_input,
+        *,
+        batch_data,
+        model_name,
+        _trace_context: dict[str, str] | None = None,
+        _page_trace_parent: str | None = None,
+        **kwargs,
     ):
         """
         Process a single batch input for inference using its corresponding batch_data.
@@ -287,7 +303,14 @@ class NimClient:
             if tracing is not None
             else nullcontext()
         )
-        with span_context:
+        with span_context, page_trace_span(
+            f"nim.request.{self.protocol}",
+            category="network",
+            model_key=self.model_interface.name(),
+            attrs={"model": model_name, "protocol": self.protocol, "endpoint": self._trace_endpoint()},
+            detail="full",
+            parent_span_id=_page_trace_parent,
+        ):
             if self.protocol == "grpc":
                 logger.debug("Performing gRPC inference for a batch...")
                 response = self._grpc_infer(batch_input, model_name, **kwargs)
@@ -327,6 +350,20 @@ class NimClient:
         Any
             The processed inference results, coalesced in the same order as the input images.
         """
+        with model_span(
+            self.model_interface.name(),
+            name=model_name,
+            backend=f"nim-{self.protocol}",
+            endpoint=self._trace_endpoint(),
+            category="network",
+            span_name=f"nim.infer.{self.model_interface.name()}",
+            attrs={"model": model_name, "protocol": self.protocol},
+            detail="full",
+        ):
+            return self._infer(data, model_name, **kwargs)
+
+    def _infer(self, data: dict, model_name: str, **kwargs) -> Any:
+        """Run inference, either through dynamic batching or offline batching."""
         # 1. Retrieve or default to the model's maximum batch size.
         batch_size = self._fetch_max_batch_size(model_name)
         max_requested_batch_size = kwargs.pop("max_batch_size", batch_size)
@@ -379,6 +416,9 @@ class NimClient:
             # 4. Process each batch concurrently using a thread pool.
             #    We enumerate the batches so that we can later reassemble results in order.
             trace_context = _capture_trace_context()
+            # Parent chains are thread-local, so hand the current parent across
+            # the pool boundary explicitly to keep request spans nested.
+            page_trace_parent = current_parent_span_id()
             results = [None] * len(formatted_batches)
             with ThreadPoolExecutor(max_workers=max_pool_workers) as executor:
                 future_to_idx = {}
@@ -389,6 +429,7 @@ class NimClient:
                         batch_data=batch_data,
                         model_name=model_name,
                         _trace_context=trace_context,
+                        _page_trace_parent=page_trace_parent,
                         **kwargs,
                     )
                     future_to_idx[future] = idx

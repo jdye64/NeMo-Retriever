@@ -67,6 +67,8 @@ def build_ingest_pipeline(plan: ResolvedIngestPlan) -> Ingestor:
         extract_kwargs["split_config"] = plan.split_config
 
     ingestor = create_ingestor(**plan.create_kwargs).files(plan.documents)
+    if plan.page_trace_dir is not None:
+        ingestor = ingestor.save_page_traces(output_directory=plan.page_trace_dir)
     ingestor = ingestor.extract(plan.extract_params, **extract_kwargs)
     if plan.dedup_params is not None:
         ingestor = ingestor.dedup(plan.dedup_params)
@@ -114,7 +116,10 @@ def execute_ingest_plan(
     if verify_rows and not overwrite:
         initial_n_rows = _count_lancedb_rows(lancedb_uri, table_name)
 
-    result = build_ingest_pipeline(plan).ingest()
+    ingest_kwargs: dict[str, Any] = {}
+    if plan.page_trace_detail is not None:
+        ingest_kwargs["page_trace_detail"] = plan.page_trace_detail
+    result = build_ingest_pipeline(plan).ingest(**ingest_kwargs)
     if plan.sparse:
         _write_sparse_lancedb_result(result, lancedb_uri=lancedb_uri, table_name=table_name, overwrite=overwrite)
 

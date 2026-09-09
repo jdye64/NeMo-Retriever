@@ -11,6 +11,7 @@ import typer
 
 from nemo_retriever.cli.ingest import app as ingest_app
 from nemo_retriever.cli.query import app as query_app
+from nemo_retriever.cli.trace import app as trace_app
 from nemo_retriever.version import get_version_info
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ from nemo_retriever.service.cli import app as service_app  # noqa: E402
 app.add_typer(service_app, name="service")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(query_app, name="query")
+app.add_typer(trace_app, name="trace")
 
 # Keep compatibility commands callable while hiding them from the product help
 # surface. HTML and TXT are intentionally absent: they are ingest input formats,

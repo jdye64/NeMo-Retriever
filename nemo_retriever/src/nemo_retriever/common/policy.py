@@ -603,8 +603,11 @@ def validate_pipeline_spec(
     if spec is None or spec.is_empty():
         return None
 
-    result_schema_only = (
-        spec.result_schema != "legacy"
+    # Result shaping and page trace detail are diagnostic knobs that do not
+    # touch trust-sensitive configuration, so a spec carrying only those is
+    # accepted without consulting the override policy.
+    diagnostics_only = (
+        (spec.result_schema != "legacy" or spec.page_trace_detail != "off")
         and spec.extraction_mode in ("pdf", "auto")
         and spec.extract_params is None
         and spec.embed_params is None
@@ -619,7 +622,7 @@ def validate_pipeline_spec(
         and not spec.return_embeddings
         and not spec.return_images
     )
-    if result_schema_only:
+    if diagnostics_only:
         return spec
 
     if policy.mode == "reject":

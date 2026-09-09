@@ -146,6 +146,10 @@ class DocumentRecord(RichModel):
     elapsed_s: float | None = None
     result_rows: int | None = None
     result_data: list[dict[str, Any]] | None = None
+    page_trace: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-page execution trace for this document, when tracing was enabled",
+    )
     error: str | None = None
     filename: str | None = Field(default=None, description="Original upload filename surfaced in the dashboard")
     collection_name: str | None = None
@@ -559,6 +563,7 @@ class JobTracker:
         result_rows: int = 0,
         result_data: list[dict[str, Any]] | None = None,
         elapsed_s: float | None = None,
+        page_trace: dict[str, Any] | None = None,
     ) -> MarkOutcome:
         """Transition a document to ``completed``; maybe finalize the job.
 
@@ -573,6 +578,7 @@ class JobTracker:
             result_rows=result_rows,
             result_data=result_data,
             elapsed_s=elapsed_s,
+            page_trace=page_trace,
         )
 
     def mark_failed(
@@ -602,6 +608,7 @@ class JobTracker:
         result_data: list[dict[str, Any]] | None = None,
         error: str | None = None,
         elapsed_s: float | None = None,
+        page_trace: dict[str, Any] | None = None,
     ) -> MarkOutcome:
         # Phase 1: under lock, mutate state and gather snapshots.
         with self._lock:
@@ -632,6 +639,10 @@ class JobTracker:
             agg_for_retain = self._jobs.get(rec.job_id)
             retain_results = bool(agg_for_retain.retain_results) if agg_for_retain is not None else False
             rec.result_data = copy.deepcopy(result_data) if retain_results else None
+            # Traces are diagnostics rather than results, so they are retained
+            # whenever the worker produced one; a client that asked for traces
+            # but not results still gets them.
+            rec.page_trace = copy.deepcopy(page_trace) if page_trace else None
             rec.error = error
             if elapsed_s is not None:
                 rec.elapsed_s = elapsed_s

@@ -24,6 +24,7 @@ from nemo_retriever.common.input_files import (
     raise_input_path_not_found,
 )
 from nemo_retriever.common.ray_runtime import ensure_local_ray_runtime
+from nemo_retriever.common.tracing.runtime import set_detail as set_trace_detail
 from nemo_retriever.common import ray_resource_hueristics as _rrh
 from nemo_retriever.common.ray_resource_hueristics import (
     gather_cluster_resources,
@@ -166,7 +167,17 @@ def call_pandas_function_on_arrow(
 class _ArrowPandasOperatorAdapter:
     """Convert valid Arrow batches to pandas before invoking an NRL operator."""
 
-    def __init__(self, operator_class: type, operator_kwargs: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        operator_class: type,
+        operator_kwargs: dict[str, Any],
+        trace_detail: str | None = None,
+    ) -> None:
+        # Ray constructs this on the worker. Workers of a pre-existing or remote
+        # cluster do not inherit the driver environment, so the page trace
+        # detail level is carried explicitly rather than read from the env.
+        if trace_detail is not None:
+            set_trace_detail(trace_detail)
         self._operator = operator_class(**operator_kwargs)
 
     def __call__(self, table: Any) -> Any:
@@ -308,9 +319,10 @@ class InprocessExecutor(AbstractExecutor):
     Only linear (single-root, no fan-out) graphs are currently supported.
     """
 
-    def __init__(self, graph: Graph, *, show_progress: bool = True) -> None:
+    def __init__(self, graph: Graph, *, show_progress: bool = True, trace_detail: str | None = None) -> None:
         super().__init__(graph)
         self._show_progress = show_progress
+        self._trace_detail = trace_detail
 
     @staticmethod
     def _linearize(graph: Graph) -> List[Node]:
@@ -348,6 +360,9 @@ class InprocessExecutor(AbstractExecutor):
             The result after all operators have been applied.
         """
         import pandas as pd
+
+        if self._trace_detail is not None:
+            set_trace_detail(self._trace_detail)
 
         if isinstance(data, pd.DataFrame):
             df = data
@@ -427,8 +442,10 @@ class RayDataExecutor(AbstractExecutor):
         node_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
         auto_concurrency_nodes: Optional[Set[str]] = None,
         source_cpu_reservation: float = 0,
+        trace_detail: Optional[str] = None,
     ) -> None:
         super().__init__(graph)
+        self._trace_detail = trace_detail
         source_cpu_reservation = float(source_cpu_reservation)
         if not math.isfinite(source_cpu_reservation) or source_cpu_reservation < 0:
             raise ValueError("source_cpu_reservation must be a finite, non-negative CPU value.")
@@ -572,6 +589,12 @@ class RayDataExecutor(AbstractExecutor):
         ray.data.Dataset
             The lazy Ray dataset with all graph stages appended.
         """
+        if self._trace_detail is not None:
+            # Export before Ray starts: workers of a locally launched cluster
+            # inherit the driver environment, which covers graph nodes whose
+            # batch_format bypasses the adapter that carries the level directly.
+            set_trace_detail(self._trace_detail, export_to_env=True)
+
         ray = ensure_local_ray_runtime(self._ray_address)
         import ray.data as rd
 
@@ -710,6 +733,7 @@ class RayDataExecutor(AbstractExecutor):
                 constructor_kwargs = {
                     "operator_class": node.operator_class,
                     "operator_kwargs": node.operator_kwargs,
+                    "trace_detail": self._trace_detail,
                 }
 
             ds = ds.map_batches(

@@ -91,6 +91,10 @@ def _ingest_plan_to_dry_run_data(plan: ResolvedIngestPlan) -> dict[str, Any]:
         "embed": _params_to_dry_run_dict(plan.embed_params),
         "store": _params_to_dry_run_dict(plan.store_params),
         "vdb_upload": _params_to_dry_run_dict(plan.vdb_params),
+        "page_trace": {
+            "output_directory": plan.page_trace_dir,
+            "detail": plan.page_trace_detail,
+        },
     }
 
 
@@ -108,6 +112,10 @@ def service_ingest_request_to_dry_run_data(request: ServiceIngestRequest) -> dic
         "caption": _params_to_dry_run_dict(request.caption_params),
         "embed": _params_to_dry_run_dict(request.embed_params),
         "store": _params_to_dry_run_dict(request.store_params),
+        "page_trace": {
+            "output_directory": request.trace.page_trace_dir,
+            "detail": request.trace.page_trace_detail,
+        },
     }
 
 

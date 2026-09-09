@@ -36,8 +36,10 @@ class _CollectingExporter:
 
 
 class _FakeIngestor:
-    def ingest(self) -> pd.DataFrame:
-        return pd.DataFrame([{"source_id": "doc-1", "text": "chunk"}])
+    def ingest(self, *, page_trace_detail: str | None = None, return_page_traces: bool = False) -> Any:
+        frame = pd.DataFrame([{"source_id": "doc-1", "text": "chunk"}])
+        _ = page_trace_detail
+        return (frame, []) if return_page_traces else frame
 
 
 @pytest.fixture
@@ -76,7 +78,7 @@ def test_run_pipeline_in_process_links_child_span_to_parent_trace(
         parent_trace_id = tracing.current_trace_id_hex()
         carrier = dict(tracing.inject_trace_context())
 
-        row_count, result_data, _elapsed = pipeline_executor._run_pipeline_in_process(
+        row_count, result_data, _elapsed, _page_trace = pipeline_executor._run_pipeline_in_process(
             "contract.pdf",
             b"%PDF-1.4\n",
             {},
@@ -112,7 +114,7 @@ def test_run_pipeline_in_process_continues_when_trace_extraction_fails(
     )
     monkeypatch.setattr(tracing, "extract_trace_context", _raise_extract)
 
-    row_count, result_data, _elapsed = pipeline_executor._run_pipeline_in_process(
+    row_count, result_data, _elapsed, _page_trace = pipeline_executor._run_pipeline_in_process(
         "contract.pdf",
         b"%PDF-1.4\n",
         {},
@@ -124,6 +126,62 @@ def test_run_pipeline_in_process_continues_when_trace_extraction_fails(
 
     assert row_count == 1
     assert result_data == [{"source_id": "doc-1", "text": "chunk"}]
+
+
+def test_page_trace_reports_service_run_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _TracingIngestor:
+        def ingest(self, *, page_trace_detail: str | None = None, return_page_traces: bool = False) -> Any:
+            frame = pd.DataFrame([{"source_id": "doc-1", "text": "chunk"}])
+            if not return_page_traces:
+                return frame
+            # The worker drives an inprocess ingestor, which is the mode the
+            # aggregator sees and stamps onto the artifact.
+            return frame, [{"run": {"run_id": "abc", "run_mode": "inprocess"}}]
+
+    monkeypatch.setattr(
+        pipeline_executor,
+        "_build_graph_ingestor_from_spec",
+        lambda *args, **kwargs: (_TracingIngestor(), "pdf", False),
+    )
+
+    _row_count, _result_data, _elapsed, page_trace = pipeline_executor._run_pipeline_in_process(
+        "contract.pdf",
+        b"%PDF-1.4\n",
+        {},
+        None,
+        pipeline_spec={"page_trace_detail": "full"},
+    )
+
+    # Traces gathered from a service deployment must be distinguishable from
+    # local ones, so the caller's mode wins over the worker's.
+    assert page_trace is not None
+    assert page_trace["run"]["run_mode"] == "service"
+    assert page_trace["run"]["run_id"] == "abc"
+
+
+def test_page_trace_run_mode_rewrite_tolerates_a_missing_run_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _OddTraceIngestor:
+        def ingest(self, *, page_trace_detail: str | None = None, return_page_traces: bool = False) -> Any:
+            frame = pd.DataFrame([{"source_id": "doc-1", "text": "chunk"}])
+            return (frame, [{"document": {"page_count": 1}}]) if return_page_traces else frame
+
+    monkeypatch.setattr(
+        pipeline_executor,
+        "_build_graph_ingestor_from_spec",
+        lambda *args, **kwargs: (_OddTraceIngestor(), "pdf", False),
+    )
+
+    _row_count, _result_data, _elapsed, page_trace = pipeline_executor._run_pipeline_in_process(
+        "contract.pdf",
+        b"%PDF-1.4\n",
+        {},
+        None,
+        pipeline_spec={"page_trace_detail": "operator"},
+    )
+
+    assert page_trace == {"document": {"page_count": 1}}
 
 
 def test_make_work_fn_continues_when_trace_capture_fails(
@@ -147,8 +205,10 @@ def test_make_work_fn_continues_when_trace_capture_fails(
     def _raise_inject(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("inject failed")
 
-    def _fake_run_pipeline_in_process(*args: Any, **kwargs: Any) -> tuple[int, list[dict[str, Any]], float]:
-        return 1, [{"source_id": "doc-1", "text": "chunk"}], 0.01
+    def _fake_run_pipeline_in_process(
+        *args: Any, **kwargs: Any
+    ) -> tuple[int, list[dict[str, Any]], float, dict[str, Any] | None]:
+        return 1, [{"source_id": "doc-1", "text": "chunk"}], 0.01, None
 
     monkeypatch.setattr(pipeline_executor, "build_extract_params", lambda nim, local=None: _Params())
     monkeypatch.setattr(pipeline_executor, "build_embed_params", lambda nim, local=None: None)
@@ -183,7 +243,7 @@ def test_make_work_fn_continues_when_trace_capture_fails(
 
     work = pipeline_executor._make_work_fn(config, label="Realtime")
     try:
-        row_count, result_data = asyncio.run(work(_WorkItem()))
+            row_count, result_data, _page_trace = asyncio.run(work(_WorkItem()))
     finally:
         pipeline_executor.shutdown_process_executors()
 

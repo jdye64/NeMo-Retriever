@@ -185,6 +185,30 @@ To tune splitter throughput from the CLI, use `--pdf-split-batch-size` (Ray acto
 
 **Python client (`pdf_split_config`):** Only [`ServiceIngestor.pdf_split_config()`](#service-ingestor) records page-chunking settings in the request pipeline spec for the remote gateway. Obtain that object with `create_ingestor(run_mode="service")`. Local graph ingest (`run_mode="inprocess"` or `"batch"`) does not implement this method. PDFs are split automatically on the default graph ingest path without client-side configuration.
 
+## Page tracing parameters { #page-tracing-parameters }
+
+`IngestExecuteParams` and `.ingest()` accept two page-tracing parameters in every run mode. `page_trace_detail` selects how much per-page timing the pipeline records. The supported values are `"off"`, `"operator"`, and `"full"`. The parameter is unset by default so that `NEMO_RETRIEVER_PAGE_TRACE_DETAIL` still applies. The effective default is `"operator"` for `run_mode="inprocess"` and `"batch"`, and `"off"` for `run_mode="service"`, where the trace has to be transmitted on every status response rather than kept in the local process. `return_page_traces` defaults to `False`. Set it to `True` to receive the collected traces alongside the ingest results; in service mode that also opts the request into tracing.
+
+Every ingestor that `create_ingestor()` returns also provides `.save_page_traces(output_directory=..., compression=...)`, which writes one trace JSON file per document. `compression` accepts `None` for plain JSON or `"gzip"`.
+
+```python
+from nemo_retriever import create_ingestor
+
+ingestor = (
+    create_ingestor(run_mode="inprocess")
+    .files("data/report.pdf")
+    .extract()
+    .save_page_traces(output_directory="traces/")
+)
+results = ingestor.ingest(page_trace_detail="full")
+```
+
+When you request extras, `.ingest()` appends them in the fixed order `failures`, `traces`, `page_traces` for whichever of `return_failures`, `return_traces`, and `return_page_traces` you set. For example, `return_failures=True` with `return_page_traces=True` returns `(results, failures, page_traces)`.
+
+The `page_traces` property holds the traces from the most recent `.ingest()` call in every run mode, so you can read them without changing the shape of the return value. Refer to [Page tracing](page-tracing.md#enable-page-tracing-in-python).
+
+`return_page_traces` is not the same as the service-mode `return_traces` parameter, which returns the raw server-sent events protocol events for the request and records no page timings. For detail levels, the `retriever trace` commands, the trace file schema, and guidance on aggregating span timings, refer to [Page tracing](page-tracing.md).
+
 ## One-shot text generation { #one-shot-text-generation }
 
 `TextGenerationOperator` is the reusable base for synchronous, one-request-per-row text generation. It is a provisional text-only API: it does not support tool calls, agent loops, streaming, multiple choices, or structured domain results.

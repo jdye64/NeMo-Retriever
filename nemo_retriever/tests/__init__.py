@@ -10,9 +10,11 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from nemo_retriever.common.modality.audio.media_interface import is_ffmpeg_available
 from nemo_retriever.common.modality.audio.media_interface import is_media_available
+from nemo_retriever.common.tracing import TRACE_COLUMN
 
 __all__ = [
     "is_ffmpeg_cli_available",
@@ -24,7 +26,21 @@ __all__ = [
     "_make_test_mp4_with_av",
     "_ffprobe_first_stream_type",
     "_assert_jpeg_bytes",
+    "drop_trace_column",
 ]
+
+
+def drop_trace_column(frame: Any) -> Any:
+    """Return *frame* without the internal page trace column.
+
+    ``AbstractOperator.run`` stamps ``_nrl_trace`` onto every operator's
+    output because operator-level tracing is on by default. The column is
+    internal — ``GraphIngestor`` strips it before results reach a caller — so
+    tests asserting on operator output schema drop it here.
+    """
+    if hasattr(frame, "columns") and TRACE_COLUMN in frame.columns:
+        return frame.drop(columns=[TRACE_COLUMN])
+    return frame
 
 
 def is_ffmpeg_cli_available() -> bool:

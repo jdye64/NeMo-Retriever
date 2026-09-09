@@ -394,6 +394,8 @@ These options apply to `retriever ingest`, `retriever ingest local`, and
 | `--dedup` | off | Add image deduplication before captioning and embedding. |
 | `--text-chunk` | off | Enable token chunking during extraction. |
 | `--store-images-uri` | unset | Store extracted images at a local path or fsspec-compatible URI. |
+| `--page-trace-dir` | unset | Write one per-page execution trace JSON file per document into this directory. Created if missing. Read the files with `retriever trace`. |
+| `--page-trace-detail` | `operator` | Per-page trace detail: `off`, `operator`, or `full`. `full` adds entry and exit times around NIM calls, GPU forwards, pdfium work, and file conversion. Also reads `NEMO_RETRIEVER_PAGE_TRACE_DETAIL`. |
 | `--dry-run` | off | Print the resolved ingest plan without creating an ingestor. |
 | `--quiet/--no-quiet` | quiet | Suppress verbose progress output by default. |
 
@@ -418,6 +420,8 @@ controls.
 | `--profile` | `auto` | Same profile names as local and batch ingest where supported. |
 | `--caption`, `--dedup`, `--text-chunk` | off | Service-supported ingest controls. |
 | `--store-images-uri` | unset | Service-accessible image storage URI. |
+| `--page-trace-dir` | unset | Write one per-page execution trace JSON file per document into this local directory. The worker records the trace; the client persists it. |
+| `--page-trace-detail` | `off` | Per-page trace detail sent to the service on the request pipeline spec: `off`, `operator`, or `full`. Service tracing is opt-in because the artifact travels back on every status response; `--page-trace-dir` or an explicit level here turns it on. |
 | `--dry-run` | off | Print the resolved service ingest request. Tokens are redacted. |
 
 ## Examples
@@ -601,3 +605,26 @@ Ingested 20 file(s) -> 1940 row(s) through retriever service http://localhost:76
 
 Use `--dry-run` on any ingest mode to inspect the resolved request without
 creating an ingestor or contacting the service.
+
+### Per-page execution traces
+
+Every ingest mode can write a per-page execution trace, one JSON file per
+document, recording each operator that touched each page along with model
+versions and the library version:
+
+```bash
+retriever ingest batch data/pdfs/ --page-trace-dir traces/ --page-trace-detail full
+```
+
+`retriever trace` reads those files:
+
+```bash
+retriever trace traces/                                  # summary (default)
+retriever trace page traces/ --page 7 --document DOC_ID  # span waterfall for one page
+retriever trace export traces/ --output spans.parquet    # flat span table
+```
+
+Sum `amortized_ms`, not `duration_ms`, when aggregating spans yourself.
+Operators process pages in batches, so `duration_ms` repeats on every page a
+batched span covered. For the trace schema and the Python API, refer to
+[Page tracing](../../../docs/docs/extraction/page-tracing.md).

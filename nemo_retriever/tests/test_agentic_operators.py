@@ -21,6 +21,8 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from tests import drop_trace_column
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers: canned nemo_agent results
@@ -248,7 +250,7 @@ class TestReActAgentOperator:
         with patch.object(ReActAgentOperator, "_ensure_agent", return_value=mock_agent):
             result = op.run(self._input())
 
-        assert set(result.columns) == {
+        assert set(drop_trace_column(result).columns) == {
             "query_id",
             "query_text",
             "step_idx",

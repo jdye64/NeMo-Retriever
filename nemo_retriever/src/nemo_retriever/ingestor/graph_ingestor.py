@@ -90,6 +90,14 @@ from nemo_retriever.common.stage_errors import (
     iter_stage_errors_from_value,
 )
 from nemo_retriever.common.modality.txt.split import empty_text_chunks_df
+from nemo_retriever.common.tracing import (
+    DEFAULT_TRACE_DETAIL,
+    aggregate_document_traces,
+    get_detail as get_trace_detail,
+    normalize_detail as normalize_trace_detail,
+    strip_trace_column,
+    write_document_traces,
+)
 
 _ERROR_FIELD_KEYS = ERROR_FIELD_KEYS
 _REMOTE_EMBED_ENDPOINT_FIELDS = ("embedding_endpoint", "embed_invoke_url")
@@ -498,6 +506,11 @@ class GraphIngestor(ingestor):
         self._buffers: list[tuple[str, BytesIO]] = []
         self._inline_texts: list[str] | None = None
 
+        # Page tracing state, resolved per ``ingest()`` call.
+        self._page_trace_detail: str = DEFAULT_TRACE_DETAIL
+        self._return_page_traces: bool = False
+        self._page_traces: list[dict[str, Any]] = []
+
         # Pipeline configuration accumulated by fluent methods
         self._extraction_mode: str | None = None
         self._extract_params: Any = None
@@ -773,6 +786,13 @@ class GraphIngestor(ingestor):
             scanned for populated error fields so local collected failures can
             still be returned; the default raise path remains scoped to
             explicitly configured remote stages.
+        page_trace_detail
+            ``"off"``, ``"operator"`` (default), or ``"full"``. Controls how
+            much per-page execution detail is recorded. See
+            :meth:`~nemo_retriever.ingestor.core.ingestor.save_page_traces`.
+        return_page_traces
+            When ``True``, append the aggregated per-document page traces to
+            the return value.
 
         Returns
         -------
@@ -781,8 +801,12 @@ class GraphIngestor(ingestor):
         ``return_failures=True``
             ``(result, failures)`` where ``failures`` is a list of
             service-style ``(source, error)`` tuples.
+        ``return_page_traces=True``
+            Appends ``traces``, a list of document trace dicts, giving
+            ``(result, traces)`` or ``(result, failures, traces)``.
         """
         return_failures = self._resolve_return_failures(params, kwargs)
+        self._resolve_page_trace_options(params, kwargs)
         self._validate_input_sources(self._inline_texts)
         if not self._documents and not self._buffers and is_blank_inline_corpus(self._inline_texts):
             result = empty_text_chunks_df()
@@ -889,6 +913,7 @@ class GraphIngestor(ingestor):
                 )
                 - set(self._node_overrides)
             ),
+            trace_detail=self._page_trace_detail,
         )
         executor_input = self._inline_text_dataset(ray.data) if self._inline_texts else self._documents
         result = executor.ingest(executor_input)
@@ -920,7 +945,9 @@ class GraphIngestor(ingestor):
             webhook_params=self._webhook_params,
             stage_order=post_extract_order,
         )
-        executor = InprocessExecutor(graph, show_progress=self._show_progress)
+        executor = InprocessExecutor(
+            graph, show_progress=self._show_progress, trace_detail=self._page_trace_detail
+        )
         self._rd_dataset = None
         if self._inline_texts:
             return executor.ingest(self._inline_text_dataframe())
@@ -967,6 +994,7 @@ class GraphIngestor(ingestor):
             show_progress=self._show_progress,
             allow_no_gpu=self._allow_no_gpu,
             ensure_batch_runtime=self._ensure_batch_runtime,
+            trace_detail=self._page_trace_detail,
         ).execute()
         self._rd_dataset = result if self._run_mode == "batch" else None
         return result
@@ -1345,6 +1373,61 @@ class GraphIngestor(ingestor):
             return bool(params["return_failures"])
         return False
 
+    @staticmethod
+    def _lookup_execute_option(params: Any, kwargs: dict[str, Any], name: str) -> Any:
+        """Read an execute-time option from ``kwargs`` first, then ``params``."""
+        if name in kwargs:
+            return kwargs[name]
+        if isinstance(params, IngestExecuteParams):
+            return getattr(params, name, None)
+        if isinstance(params, dict) and name in params:
+            return params[name]
+        return None
+
+    def _resolve_page_trace_options(self, params: Any, kwargs: dict[str, Any]) -> None:
+        """Resolve page trace settings for this ``ingest()`` call."""
+        detail = self._lookup_execute_option(params, kwargs, "page_trace_detail")
+        # Writing or returning traces is meaningless with tracing off, so an
+        # explicit request implies at least operator-level detail.
+        return_page_traces = bool(self._lookup_execute_option(params, kwargs, "return_page_traces"))
+        resolved = normalize_trace_detail(detail) if detail is not None else get_trace_detail()
+        if resolved == "off" and (return_page_traces or self._page_trace_dir):
+            resolved = DEFAULT_TRACE_DETAIL
+        self._page_trace_detail = resolved
+        self._return_page_traces = return_page_traces
+        self._page_traces = []
+
+    def _build_page_traces(self, result: Any) -> list[dict[str, Any]]:
+        """Aggregate document traces from *result* and persist them if asked."""
+        if self._page_trace_detail == "off":
+            return []
+        try:
+            traces = aggregate_document_traces(
+                result,
+                run_mode=self._run_mode,
+                pipeline_operators=list(self._stage_order),
+                params={"page_trace_detail": self._page_trace_detail},
+            )
+        except Exception:
+            logger.warning("Failed to aggregate page traces; returning results without them.", exc_info=True)
+            return []
+
+        if traces and self._page_trace_dir:
+            try:
+                write_document_traces(
+                    traces,
+                    self._page_trace_dir,
+                    compression=self._page_trace_compression,
+                )
+            except OSError:
+                logger.warning("Failed to write page traces to %s.", self._page_trace_dir, exc_info=True)
+        return traces
+
+    @property
+    def page_traces(self) -> list[dict[str, Any]]:
+        """Document traces aggregated by the most recent ``ingest()`` call."""
+        return list(self._page_traces)
+
     def _collect_failure_records(self, result: Any) -> list[dict[str, Any]]:
         diagnostics = self._remote_stage_diagnostics()
         # With explicit remote stages, report only their diagnostic columns.
@@ -1357,8 +1440,19 @@ class GraphIngestor(ingestor):
         return [self._public_failure_tuple(record) for record in self._collect_failure_records(result)]
 
     def _finalize_ingest_result(self, result: Any, *, return_failures: bool) -> Any:
+        # Aggregate before stripping, and before any error path returns: a
+        # failed run's trace is exactly what a user needs to diagnose it.
+        self._page_traces = self._build_page_traces(result)
+        result = strip_trace_column(result)
+
         if return_failures:
-            return result, self._collect_failure_tuples(result)
+            failures = self._collect_failure_tuples(result)
+            if self._return_page_traces:
+                return result, failures, self._page_traces
+            return result, failures
+        if self._return_page_traces:
+            self._raise_for_stage_errors(result)
+            return result, self._page_traces
         self._raise_for_stage_errors(result)
         return result
 

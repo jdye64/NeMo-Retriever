@@ -12,6 +12,7 @@ from typing import Any, Sequence
 from nemo_retriever.ingest.plan import (
     IngestInputTypeValue,
     IngestProfileValue,
+    IngestTraceOptions,
     build_caption_params,
     build_dedup_params,
     build_store_params,
@@ -20,6 +21,7 @@ from nemo_retriever.ingest.plan import (
     profile_extract_defaults,
     validate_ingest_input_type,
     validate_ingest_profile,
+    validate_page_trace_detail,
 )
 from nemo_retriever.common.params import (
     CaptionParams,
@@ -111,6 +113,7 @@ class ServiceIngestPlanRequest:
     chunk: ServiceIngestChunkOptions = field(default_factory=ServiceIngestChunkOptions)
     embed: ServiceIngestEmbedOptions = field(default_factory=ServiceIngestEmbedOptions)
     image_store: ServiceIngestImageStoreOptions = field(default_factory=ServiceIngestImageStoreOptions)
+    trace: IngestTraceOptions = field(default_factory=IngestTraceOptions)
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,7 @@ class ServiceIngestRequest:
     caption_params: CaptionParams | None = None
     store_params: StoreParams | None = None
     connection: ServiceIngestConnectionOptions = field(default_factory=ServiceIngestConnectionOptions)
+    trace: IngestTraceOptions = field(default_factory=IngestTraceOptions)
 
 
 @dataclass(frozen=True)
@@ -228,6 +232,10 @@ def resolve_service_ingest_request(request: ServiceIngestPlanRequest) -> Service
         ),
         store_params=build_store_params(images_uri=request.image_store.images_uri),
         connection=request.connection,
+        trace=IngestTraceOptions(
+            page_trace_dir=request.trace.page_trace_dir,
+            page_trace_detail=validate_page_trace_detail(request.trace.page_trace_detail),
+        ),
     )
 
 
@@ -245,6 +253,9 @@ def build_service_ingestor(request: ServiceIngestRequest) -> Any:
         max_concurrency=request.connection.service_concurrency,
         api_token=request.connection.service_api_token,
     ).files(resolved_files)
+
+    if request.trace.page_trace_dir is not None:
+        ingestor = ingestor.save_page_traces(output_directory=request.trace.page_trace_dir)
 
     ingestor = _attach_service_extract_stage(
         ingestor,
@@ -281,7 +292,10 @@ def execute_service_ingest_request(
     downloads explicitly.
     """
 
-    result = build_service_ingestor(request).ingest(return_results=return_results)
+    ingest_kwargs: dict[str, Any] = {"return_results": return_results}
+    if request.trace.page_trace_detail is not None:
+        ingest_kwargs["page_trace_detail"] = request.trace.page_trace_detail
+    result = build_service_ingestor(request).ingest(**ingest_kwargs)
     failures = list(getattr(result, "failures", ()) or ())
     if failures:
         document, detail = failures[0]

@@ -17,6 +17,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from tests import drop_trace_column
+
 
 class FakeCompletionClient:
     """Small thread-safe completion client used by task and operator tests."""
@@ -299,7 +301,7 @@ class TestTextGenerationOperators:
 
         out = SummarizationOperator(_params(), client=client).run(source)
 
-        assert out.to_dict(orient="records") == [
+        assert drop_trace_column(out).to_dict(orient="records") == [
             {
                 "text": "long source",
                 "summary": "short",
@@ -493,7 +495,7 @@ class TestTextGenerationOperators:
 
         out = SummarizationOperator(_params(), client=FakeCompletionClient()).run(pd.DataFrame({"text": ["source"]}))
 
-        assert out.dtypes.astype(str).to_dict() == {
+        assert drop_trace_column(out).dtypes.astype(str).to_dict() == {
             "text": "object",
             "summary": "object",
             "summary_latency_s": "float64",
@@ -542,7 +544,7 @@ class TestQACompatibility:
         source = pd.DataFrame({"query": ["question"], "context": [["context"]]})
         out = operator.run(source)
 
-        assert list(out.columns) == [
+        assert list(drop_trace_column(out).columns) == [
             "query",
             "context",
             "answer",

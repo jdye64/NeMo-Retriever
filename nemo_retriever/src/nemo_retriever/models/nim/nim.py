@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import requests
 
+from nemo_retriever.common.tracing.spans import current_parent_span_id, span as page_trace_span
+
 logger = logging.getLogger(__name__)
 
 
@@ -137,6 +139,7 @@ def _post_with_retries(
     max_retries: int,
     max_429_retries: int,
     trace_context: Dict[str, str] | None = None,
+    page_trace_parent: str | None = None,
 ) -> Any:
     base_delay = 2.0
     attempt = 0
@@ -170,9 +173,20 @@ def _post_with_retries(
                     except Exception as exc:
                         logger.warning("OpenTelemetry trace propagation failed for NIM request: %s", exc)
                 try:
-                    response = requests.post(
-                        invoke_url, headers=request_headers, json=payload, timeout=float(timeout_s)
-                    )
+                    with page_trace_span(
+                        "nim.http.post",
+                        category="network",
+                        detail="full",
+                        parent_span_id=page_trace_parent,
+                        attrs={
+                            "endpoint": _safe_endpoint_attribute(invoke_url),
+                            "retry_attempt": attempt,
+                        },
+                    ) as trace_handle:
+                        response = requests.post(
+                            invoke_url, headers=request_headers, json=payload, timeout=float(timeout_s)
+                        )
+                        trace_handle.set_attr("http_status", response.status_code)
                 except (requests.Timeout, requests.RequestException) as exc:
                     _set_span_error(span, exc)
                     raise
@@ -310,6 +324,9 @@ class NIMClient:
         ranges = _chunk_ranges(n, int(max_batch_size))
         flattened: List[Optional[Any]] = [None] * n
         trace_context = _capture_trace_context()
+        # Parent chains are thread-local; capture here so requests issued
+        # on pool threads still nest under the calling operator's span.
+        page_trace_parent = current_parent_span_id()
 
         def _invoke_one_batch(start: int, end: int, endpoint_url: str) -> Tuple[int, int, List[Any]]:
             inputs = [
@@ -330,6 +347,7 @@ class NIMClient:
                 max_retries=int(max_retries),
                 max_429_retries=int(max_429_retries),
                 trace_context=trace_context,
+                page_trace_parent=page_trace_parent,
             )
             per_image = _normalize_batch_response(response_json, end - start)
             return start, end, per_image
@@ -409,6 +427,9 @@ class NIMClient:
         invoke_urls = _parse_invoke_urls(invoke_url)
         results: List[Optional[str]] = [None] * len(messages_list)
         trace_context = _capture_trace_context()
+        # Parent chains are thread-local; capture here so requests issued
+        # on pool threads still nest under the calling operator's span.
+        page_trace_parent = current_parent_span_id()
 
         def _invoke_one(idx: int, messages: List[Dict[str, Any]], endpoint_url: str) -> Tuple[int, str]:
             payload: Dict[str, Any] = {
@@ -427,6 +448,7 @@ class NIMClient:
                 max_retries=int(max_retries),
                 max_429_retries=int(max_429_retries),
                 trace_context=trace_context,
+                page_trace_parent=page_trace_parent,
             )
             return idx, extract_chat_completion_text(response_json)
 

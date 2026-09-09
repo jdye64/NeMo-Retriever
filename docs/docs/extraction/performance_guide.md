@@ -12,6 +12,22 @@ Use this guide to document practical recommendations for:
 - NIM endpoint sizing and concurrency settings
 - Benchmarking methodology and repeatable test setups
 
+## Find bottlenecks with page tracing { #find-bottlenecks-with-page-tracing }
+
+Before you tune worker counts or batch sizes, measure where the time goes. NeMo Retriever Library records a per-page trace of every operator that runs, and aggregates those traces into one JSON file per document.
+
+Operator-level tracing is on by default and adds negligible overhead. To attribute time to individual NIM calls, model forward passes, and file conversions, run at `full` detail. The following command writes traces for a batch ingest. Replace `/path/to/your/pdfs` with a directory of PDF files that you supply.
+
+```bash
+retriever ingest batch /path/to/your/pdfs \
+  --page-trace-dir traces/ \
+  --page-trace-detail full
+
+retriever trace traces/
+```
+
+The summary ranks operators by total and per-page time, lists the slowest pages, and reports how much of the traced time went to network, GPU, CPU, and I/O work. Use that breakdown to decide whether to add extraction workers, add NIM replicas, or change batch sizes. For the detail levels, the Python API, the trace file schema, and how to aggregate span timings correctly, refer to [Page tracing](page-tracing.md).
+
 ## Batch resource sizing
 
 In batch mode, NeMo Retriever Library sizes unspecified Ray actor pools from Ray CPU and GPU resources. The library uses the resources that Ray reports as available immediately before it submits the pipeline. This prevents default extraction, OCR, and embedding pools from reserving more resources than the cluster can schedule.

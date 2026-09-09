@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _filesystem_lock = threading.Lock()
 _store: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_trace_store: dict[str, tuple[float, dict[str, Any]]] = {}
+_TRACE_SUFFIX = ".trace.json"
 _RESULTS_DIR_ENV = "NEMO_RETRIEVER_RESULTS_DIR"
 _RESULTS_TTL_S_ENV = "NEMO_RETRIEVER_RESULTS_TTL_SECONDS"
 _DEFAULT_RESULTS_TTL_S = 8 * 3600  # stale-job window plus terminal-job retention
@@ -115,6 +117,15 @@ def _is_document_dir(path: Path) -> bool:
 
 def _is_generation(path: Path) -> bool:
     return path.name.endswith(".json") and _is_hex(path.name.removesuffix(".json"), 32)
+
+
+def _is_trace_generation(path: Path) -> bool:
+    """Page traces live beside result generations under a distinct suffix.
+
+    The suffix keeps :func:`_is_generation` from ever mistaking a trace for a
+    result payload, so readers of retained rows are unaffected.
+    """
+    return path.name.endswith(_TRACE_SUFFIX) and _is_hex(path.name.removesuffix(_TRACE_SUFFIX), 32)
 
 
 def _is_temporary(path: Path) -> bool:
@@ -233,7 +244,9 @@ def _sweep_expired_files(results_dir: Path, *, now: float, ttl_s: float) -> None
             logger.debug("Unable to scan shared result document directory %s", document_dir, exc_info=True)
             continue
         removed += sum(
-            _remove_expired_file(path, cutoff=cutoff) for path in paths if _is_generation(path) or _is_temporary(path)
+            _remove_expired_file(path, cutoff=cutoff)
+            for path in paths
+            if _is_generation(path) or _is_trace_generation(path) or _is_temporary(path)
         )
         try:
             if document_dir.stat().st_mtime <= cutoff:
@@ -278,6 +291,60 @@ def _store_on_filesystem(results_dir: Path, document_id: str, result_data: list[
             temporary.unlink(missing_ok=True)
         except OSError:
             logger.warning("Unable to remove interrupted shared result write %s", temporary, exc_info=True)
+
+
+def _store_trace_on_filesystem(results_dir: Path, document_id: str, page_trace: dict[str, Any]) -> None:
+    _maybe_sweep_expired_files(results_dir)
+    with _filesystem_lock:
+        root = _ensure_results_root(results_dir)
+        document_dir = root / _document_digest(document_id)
+        _mkdir_and_fsync_parent(document_dir)
+    generation_id = uuid.uuid4().hex
+    temporary = document_dir / f".{generation_id}.tmp"
+    target = document_dir / f"{generation_id}{_TRACE_SUFFIX}"
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(page_trace, stream, ensure_ascii=False, separators=(",", ":"), default=str)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        _fsync_directory(document_dir)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Unable to remove interrupted shared trace write %s", temporary, exc_info=True)
+
+
+def _get_trace_from_filesystem(results_dir: Path, document_id: str) -> dict[str, Any] | None:
+    _maybe_sweep_expired_files(results_dir)
+    document_dir = _document_dir(results_dir, document_id)
+    try:
+        paths = list(document_dir.iterdir())
+    except (FileNotFoundError, OSError):
+        return None
+
+    candidates: list[tuple[int, Path]] = []
+    for path in paths:
+        if not _is_trace_generation(path):
+            continue
+        try:
+            candidates.append((path.stat().st_mtime_ns, path))
+        except (FileNotFoundError, OSError):
+            continue
+    for _, candidate in sorted(candidates, reverse=True):
+        try:
+            with candidate.open(encoding="utf-8") as stream:
+                trace = json.load(stream)
+        except FileNotFoundError:
+            continue
+        except (ValueError, OSError):
+            # A trace is diagnostic data; never fail a result fetch over it.
+            logger.warning("Unable to read shared page trace for %r", document_id, exc_info=True)
+            return None
+        if isinstance(trace, dict):
+            return trace
+    return None
 
 
 def _generation_candidates(document_dir: Path, document_id: str) -> list[Path]:
@@ -326,6 +393,9 @@ def _sweep_memory_locked(*, now: float) -> None:
     for document_id, (stored_at, _) in list(_store.items()):
         if stored_at <= cutoff:
             _store.pop(document_id, None)
+    for document_id, (stored_at, _) in list(_trace_store.items()):
+        if stored_at <= cutoff:
+            _trace_store.pop(document_id, None)
 
 
 def store_result_data(document_id: str, result_data: list[dict[str, Any]] | None) -> None:
@@ -339,6 +409,29 @@ def store_result_data(document_id: str, result_data: list[dict[str, Any]] | None
         now = time.monotonic()
         _sweep_memory_locked(now=now)
         _store[document_id] = (now, copy.deepcopy(result_data))
+
+
+def store_page_trace(document_id: str, page_trace: dict[str, Any] | None) -> None:
+    """Retain the page trace for a completed document until TTL cleanup."""
+    if not document_id or not page_trace:
+        return
+    if results_dir := _results_dir():
+        _store_trace_on_filesystem(results_dir, document_id, page_trace)
+        return
+    with _lock:
+        now = time.monotonic()
+        _sweep_memory_locked(now=now)
+        _trace_store[document_id] = (now, copy.deepcopy(page_trace))
+
+
+def get_page_trace(document_id: str) -> dict[str, Any] | None:
+    """Return the retained page trace for *document_id* without consuming it."""
+    if results_dir := _results_dir():
+        return _get_trace_from_filesystem(results_dir, document_id)
+    with _lock:
+        _sweep_memory_locked(now=time.monotonic())
+        entry = _trace_store.get(document_id)
+        return copy.deepcopy(entry[1]) if entry is not None else None
 
 
 def get_result_data(document_id: str) -> list[dict[str, Any]] | None:
@@ -363,6 +456,7 @@ def discard_local_result_data(document_id: str) -> None:
         return
     with _lock:
         _store.pop(document_id, None)
+        _trace_store.pop(document_id, None)
 
 
 def clear_for_tests() -> None:
@@ -370,5 +464,6 @@ def clear_for_tests() -> None:
     global _last_sweep_at, _last_sweep_dir
     with _lock:
         _store.clear()
+        _trace_store.clear()
         _last_sweep_dir = None
         _last_sweep_at = 0.0

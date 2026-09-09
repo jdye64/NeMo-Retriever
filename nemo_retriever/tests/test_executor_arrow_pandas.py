@@ -15,6 +15,7 @@ from ray.data.block import BlockAccessor
 from ray.data import DataContext
 from ray.data.extensions import TensorArray
 
+from tests import drop_trace_column
 from nemo_retriever.graph.executor import (
     _ArrowPandasOperatorAdapter,
     _preserves_pandas_output,
@@ -100,7 +101,7 @@ def test_adapter_returns_row_safe_frames_for_sliced_nested_arrow_columns() -> No
     roundtripped = pa.Table.from_pandas(result, preserve_index=False)
 
     roundtripped.validate(full=True)
-    assert result.to_dict("records") == [
+    assert drop_trace_column(result).to_dict("records") == [
         {"metadata": {"has_text": True, "source_path": "document.pdf", "error": None}, "text": "page 2"}
     ]
     assert isinstance(result.dtypes["text"], pd.ArrowDtype)

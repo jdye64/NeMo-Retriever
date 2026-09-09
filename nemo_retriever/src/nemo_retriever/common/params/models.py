@@ -330,6 +330,12 @@ class IngestExecuteParams(_ParamsModel):
     show_progress: bool = False
     return_failures: bool = False
     return_traces: bool = False
+    # Per-page execution traces. Distinct from ``return_traces``, which in
+    # service run mode returns raw HTTP/SSE protocol events. Left unset so
+    # NEMO_RETRIEVER_PAGE_TRACE_DETAIL still applies; the effective default
+    # when neither is given is "operator".
+    page_trace_detail: Optional[Literal["off", "operator", "full"]] = None
+    return_page_traces: bool = False
     return_results: bool = True
     result_schema: Literal["legacy", "compact"] = "legacy"
     return_embeddings: bool = False

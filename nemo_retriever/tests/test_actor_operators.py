@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from tests import drop_trace_column
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 
 
@@ -717,7 +718,7 @@ class TestTextChunkActor:
         mock_fn.return_value = expected
         actor = self._make()
         result = actor(pd.DataFrame({"text": ["hello world"]}))
-        pd.testing.assert_frame_equal(result, expected)
+        pd.testing.assert_frame_equal(drop_trace_column(result), drop_trace_column(expected))
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +761,7 @@ class TestImageLoadActor:
         mock_fn.return_value = expected
         actor = self._make()
         result = actor(pd.DataFrame({"bytes": [b"img"], "path": ["/tmp/a.png"]}))
-        pd.testing.assert_frame_equal(result, expected)
+        pd.testing.assert_frame_equal(drop_trace_column(result), drop_trace_column(expected))
 
 
 # ---------------------------------------------------------------------------
@@ -803,7 +804,7 @@ class TestTxtSplitActor:
         mock_fn.return_value = expected
         actor = self._make()
         result = actor(pd.DataFrame({"bytes": [b"hello"], "path": ["/a.txt"]}))
-        pd.testing.assert_frame_equal(result, expected)
+        pd.testing.assert_frame_equal(drop_trace_column(result), drop_trace_column(expected))
 
     @patch(
         "nemo_retriever.operators.extract.txt.ray_data.text_to_chunks_df",
@@ -855,7 +856,7 @@ class TestHtmlSplitActor:
         mock_fn.return_value = expected
         actor = self._make()
         result = actor(pd.DataFrame({"bytes": [b"<p>hi</p>"], "path": ["/a.html"]}))
-        pd.testing.assert_frame_equal(result, expected)
+        pd.testing.assert_frame_equal(drop_trace_column(result), drop_trace_column(expected))
 
 
 # ---------------------------------------------------------------------------

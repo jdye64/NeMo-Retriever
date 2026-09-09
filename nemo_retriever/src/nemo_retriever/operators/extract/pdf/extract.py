@@ -23,6 +23,7 @@ from nemo_retriever.common.api.util.pdf.pdfium import (
 
 import pandas as pd
 
+from nemo_retriever.common.tracing.spans import span as trace_span
 from nemo_retriever.models.nim.error_reporter import report_error
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 from nemo_retriever.operators.cpu_operator import CPUOperator
@@ -339,7 +340,8 @@ def pdf_extraction(
 
                     # Text extraction
                     if extract_text and not ocr_extraction_needed_for_text:
-                        page_text = _extract_page_text(page)
+                        with trace_span("pdfium.extract_text", category="cpu", source_id=source_id, detail="full"):
+                            page_text = _extract_page_text(page)
                         # TODO: Tiddy up logic here for document depth option
                         if text_depth == "page":
                             text = page_text
@@ -358,19 +360,29 @@ def pdf_extraction(
                     )
                     render_info: Optional[Dict[str, Any]] = None
                     if want_any_raster:
-                        render_info = _render_page_to_base64(
-                            page,
-                            dpi=dpi,
-                            image_format=image_format,
-                            jpeg_quality=jpeg_quality,
-                            render_mode=render_mode,
-                        )
+                        with trace_span(
+                            "pdfium.render_page",
+                            category="cpu",
+                            source_id=source_id,
+                            detail="full",
+                            attrs={"dpi": dpi, "image_format": image_format, "render_mode": render_mode},
+                        ):
+                            render_info = _render_page_to_base64(
+                                page,
+                                dpi=dpi,
+                                image_format=image_format,
+                                jpeg_quality=jpeg_quality,
+                                render_mode=render_mode,
+                            )
 
                     # Extract cropped images from pdfium page objects.
                     detected_images: List[Dict[str, Any]] = []
                     if extract_images:
                         try:
-                            base64_images = extract_image_like_objects_from_pdfium_page(page)
+                            with trace_span(
+                                "pdfium.extract_images", category="cpu", source_id=source_id, detail="full"
+                            ):
+                                base64_images = extract_image_like_objects_from_pdfium_page(page)
                             for img in base64_images:
                                 max_w = float(img.max_width) if img.max_width else 1.0
                                 max_h = float(img.max_height) if img.max_height else 1.0

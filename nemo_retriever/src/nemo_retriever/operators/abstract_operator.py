@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 import inspect
 from typing import Any, TYPE_CHECKING
 
+from nemo_retriever.common.tracing.collector import operator_trace
+
 if TYPE_CHECKING:
     from nemo_retriever.graph.pipeline_graph import Graph, Node
 
@@ -30,10 +32,18 @@ class AbstractOperator(ABC):
     def postprocess(self, data: Any, **kwargs: Any) -> Any: ...
 
     def run(self, data: Any, **kwargs: Any) -> Any:
-        data = self.preprocess(data, **kwargs)
-        data = self.process(data, **kwargs)
-        data = self.postprocess(data, **kwargs)
-        return data
+        """Run the operator, recording a page trace span for the invocation.
+
+        Both executors reach every operator through this method, so timing it
+        here covers the whole graph in in-process and Ray runs alike. When
+        tracing is disabled the tracer is a no-op and ``finish`` returns the
+        frame untouched.
+        """
+        with operator_trace(self, data) as tracer:
+            data = self.preprocess(data, **kwargs)
+            data = self.process(data, **kwargs)
+            data = self.postprocess(data, **kwargs)
+            return tracer.finish(data)
 
     def __call__(self, data: Any, **kwargs: Any) -> Any:
         """Make operators directly usable as Ray ``map_batches`` callables."""

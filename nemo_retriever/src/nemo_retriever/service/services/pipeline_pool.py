@@ -555,11 +555,14 @@ class _Pool:
                         tracker.mark_processing(item.id)
                     result_rows = 0
                     result_data = None
+                    page_trace = None
                     if self._work_fn is not None:
                         result = self._work_fn(item)
                         if asyncio.iscoroutine(result):
                             result = await result
-                        if isinstance(result, tuple) and len(result) == 2:
+                        if isinstance(result, tuple) and len(result) == 3:
+                            result_rows, result_data, page_trace = result
+                        elif isinstance(result, tuple) and len(result) == 2:
                             result_rows, result_data = result
                         elif isinstance(result, int):
                             result_rows = result
@@ -573,10 +576,12 @@ class _Pool:
                     if item.callback_url:
                         if retain_results:
                             from nemo_retriever.service.services.worker_result_store import (
+                                store_page_trace,
                                 store_result_data,
                             )
 
                             store_result_data(item.id, result_data)
+                            store_page_trace(item.id, page_trace)
                         callback_outcome = await _fire_gateway_callback(
                             item.callback_url,
                             item.id,
@@ -614,6 +619,7 @@ class _Pool:
                             item.id,
                             result_rows=result_rows,
                             result_data=result_data if retain_results else None,
+                            page_trace=page_trace,
                         )
                     self._processed += 1
                 except Exception as exc:

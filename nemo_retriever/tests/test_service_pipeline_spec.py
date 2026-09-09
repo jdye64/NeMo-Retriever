@@ -793,7 +793,7 @@ def test_run_pipeline_in_process_html_txt_produce_rows(monkeypatch: pytest.Monke
         "nemo_retriever.common.modality.html.convert._get_txt_tokenizer", lambda *_, **__: _TinyTokenizer()
     )
     monkeypatch.setattr("nemo_retriever.common.modality.txt.split._get_tokenizer", lambda *_, **__: _TinyTokenizer())
-    html_rows, _, _ = _run_pipeline_in_process(
+    html_rows, _, _, _ = _run_pipeline_in_process(
         "page.html",
         b"<html><body><h1>Title</h1><p>body</p></body></html>",
         {},
@@ -801,7 +801,7 @@ def test_run_pipeline_in_process_html_txt_produce_rows(monkeypatch: pytest.Monke
         None,
         spec,
     )
-    txt_rows, _, _ = _run_pipeline_in_process(
+    txt_rows, _, _, _ = _run_pipeline_in_process(
         "notes.txt",
         b"Line one\nLine two\n",
         {},
@@ -816,7 +816,7 @@ def test_run_pipeline_in_process_html_txt_produce_rows(monkeypatch: pytest.Monke
 def test_run_pipeline_in_process_preserves_service_inline_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("nemo_retriever.common.modality.txt.split._get_tokenizer", lambda *_, **__: _TinyTokenizer())
 
-    row_count, rows, _ = _run_pipeline_in_process(
+    row_count, rows, _, _ = _run_pipeline_in_process(
         "inline://00000003",
         "café service".encode("utf-8"),
         {},
@@ -869,8 +869,9 @@ def test_run_pipeline_posts_canonical_pdf_table_image_provenance(
     ]
 
     class _Ingestor:
-        def ingest(self):
-            return graph_rows
+        def ingest(self, *, page_trace_detail=None, return_page_traces=False):
+            _ = page_trace_detail
+            return (graph_rows, []) if return_page_traces else graph_rows
 
     class _Response:
         status = 200
@@ -897,7 +898,7 @@ def test_run_pipeline_posts_canonical_pdf_table_image_provenance(
     )
     monkeypatch.setattr("urllib.request.urlopen", _urlopen)
 
-    row_count, _, _ = _run_pipeline_in_process(
+    row_count, _, _, _ = _run_pipeline_in_process(
         "report.pdf",
         b"%PDF-1.4 stub",
         {},

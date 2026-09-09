@@ -152,13 +152,13 @@ def test_materialize_fetches_once_when_return_results_and_save_to_disk(tmp_path:
         document_id: str,
         *,
         client: httpx.Client | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         nonlocal fetch_calls
         fetch_calls += 1
         assert document_id == "doc-1"
-        return rows
+        return {"result_data": rows}
 
-    with patch.object(ServiceIngestor, "_fetch_document_result_data", _counting_fetch):
+    with patch.object(ServiceIngestor, "_fetch_document_status_body", _counting_fetch):
         out_rows = ing._materialize_completed_document("doc-1", return_results=True)
 
     assert fetch_calls == 1

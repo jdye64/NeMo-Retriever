@@ -96,6 +96,8 @@ class ingestor:
     def __init__(self, documents: Optional[List[str]] = None) -> None:
         self._documents: List[str] = list(documents or [])
         self._buffers: List[Tuple[str, BytesIO]] = []
+        self._page_trace_dir: Optional[str] = None
+        self._page_trace_compression: Optional[str] = None
 
     def _not_implemented(self, method_name: str) -> "None":
         raise NotImplementedError(
@@ -147,6 +149,42 @@ class ingestor:
     def ingest_async(self, *, return_failures: bool = False, return_traces: bool = False) -> Any:
         """Asynchronously execute ingestion (placeholder)."""
         self._not_implemented("ingest_async")
+
+    def save_page_traces(
+        self,
+        output_directory: str,
+        *,
+        compression: Optional[str] = None,
+    ) -> Self:
+        """Write one per-page execution trace file per document to disk.
+
+        Supported in every run mode. Each document produces a
+        ``{document_id}.trace.json`` file holding document-level rollups plus
+        the full per-page span detail. Inspect the files with
+        ``retriever trace``, or load them with
+        :func:`nemo_retriever.common.tracing.load_traces`.
+
+        Parameters
+        ----------
+        output_directory
+            Directory to write trace files into. Created if missing.
+        compression
+            ``None`` for plain JSON, or ``"gzip"`` to write ``.trace.json.gz``.
+
+        Returns
+        -------
+        Self
+            The ingestor, for fluent chaining.
+        """
+        if not output_directory:
+            raise ValueError(f"{type(self).__name__}.save_page_traces(): output_directory is required.")
+        if compression not in (None, "gzip"):
+            raise ValueError(
+                f"save_page_traces(compression={compression!r}): only None or 'gzip' are supported."
+            )
+        self._page_trace_dir = str(output_directory)
+        self._page_trace_compression = compression
+        return self
 
     def all_tasks(self) -> "ingestor":
         """Record the default task chain (placeholder)."""

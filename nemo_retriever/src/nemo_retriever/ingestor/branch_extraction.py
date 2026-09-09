@@ -73,6 +73,7 @@ class ExtractionBranchExecutor:
     show_progress: bool
     allow_no_gpu: bool
     ensure_batch_runtime: Callable[[], tuple[Any, Any]]
+    trace_detail: str | None = None
 
     def execute(self) -> Any:
         logger.info(
@@ -172,7 +173,9 @@ class ExtractionBranchExecutor:
                 effective_extraction.extraction_mode,
             )
             graph = self._build_extraction_only_graph(effective_extraction)
-            executor = InprocessExecutor(graph, show_progress=self.show_progress)
+            executor = InprocessExecutor(
+                graph, show_progress=self.show_progress, trace_detail=self.trace_detail
+            )
             frames.append(executor.ingest(self._inprocess_branch_input(branch)))
 
         combined = concat_dataframes(frames)
@@ -187,7 +190,9 @@ class ExtractionBranchExecutor:
             stage_order=self.post_extract_order,
             reshape_content_before_embed=self._should_reshape_content_before_embed(),
         )
-        return InprocessExecutor(post_graph, show_progress=self.show_progress).ingest(combined)
+        return InprocessExecutor(
+            post_graph, show_progress=self.show_progress, trace_detail=self.trace_detail
+        ).ingest(combined)
 
     def _should_reshape_content_before_embed(self) -> bool:
         return any(branch.family in {"pdf", "image"} for branch in self.branches)
@@ -247,6 +252,7 @@ class ExtractionBranchExecutor:
             node_overrides=merge_node_overrides(derived_overrides, self.node_overrides),
             auto_concurrency_nodes=auto_concurrency_nodes - set(self.node_overrides),
             source_cpu_reservation=source_cpu_reservation,
+            trace_detail=self.trace_detail,
         )
 
     def _inprocess_branch_input(self, branch: ExtractionBranchPlan) -> Any:

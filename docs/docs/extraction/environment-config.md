@@ -21,6 +21,7 @@ On Windows PowerShell, set the variables in the session, for example `$env:NVIDI
 | `HF_ACCESS_TOKEN`                | -                                                         | A token for Hugging Face Hub downloads when your runtime needs one. The default chunking tokenizer is public; refer to [Token-based splitting](concepts.md#token-based-splitting) for container caching and offline behavior. |
 | `NVIDIA_API_KEY`                    | `nvapi-*************` <br/>                              | An authorized build.nvidia.com API key, used to interact with NVIDIA-hosted NIMs. Create through build.nvidia.com or through [NGC](https://org.ngc.nvidia.com/setup/api-keys). |
 | `NGC_API_KEY`                | —                                                          | The key that NIM microservices in the cluster use to access NGC resources. |
+| `NEMO_RETRIEVER_PAGE_TRACE_DETAIL` | `full`                                               | The per-page tracing detail level. Valid values are `off`, `operator`, and `full`. The default is `operator` for local and batch ingest, and `off` for service ingest unless the request asks for traces. Refer to [Page tracing](page-tracing.md). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`    | `http://otel-collector:4317` <br/>                       | The endpoint for the OpenTelemetry exporter, used for sending telemetry data. |
 | `OTEL_METRICS_EXPORTER` | `otlp` | The retriever service metrics exporter. Set to `none` to disable OpenTelemetry metric export while retaining other supported telemetry. |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `5000` | The metric export interval in milliseconds for Helm deployments. Set a larger value to reduce export frequency. |
@@ -73,5 +74,6 @@ For Ray worker logging, refer to [Configure Ray Logging](ray-logging.md).
 ## Related Topics { #related-topics }
 
 - [Configure Ray Logging](ray-logging.md)
+- [Page tracing](page-tracing.md)
 - [Authentication and API keys](api-keys.md)
 - [Python API guide](nemo-retriever-api-reference.md)
