@@ -119,15 +119,21 @@ def warm_local_models(spec: dict[str, Any]) -> None:
     stages = set(spec.get("stages") or [])
 
     if "fused" in stages:
-        from nemo_retriever.common.modality.fused.shared import FUSED_IMPORT_HINT
+        from nemo_retriever.common.modality.fused.shared import FUSED_IMPORT_HINT, build_fused_config
 
         try:
             from nemo_retriever_fused import NemoRetrieverFusedModel
         except ImportError as exc:  # pragma: no cover - depends on optional install
             raise ImportError(FUSED_IMPORT_HINT) from exc
 
-        logger.info("Warming local model: fused")
-        _REGISTRY["fused"] = NemoRetrieverFusedModel.from_pretrained()
+        ocr_version = str(spec.get("ocr_version", "v2"))
+        ocr_lang = spec.get("ocr_lang")
+        # The warmed model is returned to every actor as-is, so it has to be
+        # built with the same OCR selectors the actor would have used.
+        logger.info("Warming local model: fused (ocr_version=%s, ocr_lang=%s)", ocr_version, ocr_lang)
+        _REGISTRY["fused"] = NemoRetrieverFusedModel.from_pretrained(
+            build_fused_config(ocr_version=ocr_version, ocr_lang=ocr_lang)
+        )
 
     if "page_elements" in stages:
         from nemo_retriever.models.local import NemotronPageElementsV3

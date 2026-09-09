@@ -163,6 +163,78 @@ class TestWarmupSpec:
         assert set(spec["stages"]) == {"page_elements", "ocr", "table_structure"}
 
 
+class TestOcrSelectorPlumbing:
+    """``ocr_version`` and ``ocr_lang`` must reach the fused OCR stage.
+
+    Both stay settable on ``ExtractParams`` under ``method="fused"``, so if the
+    graph dropped them the fused model would quietly run multilingual v2 while
+    the caller believed otherwise.
+    """
+
+    @staticmethod
+    def _fused_node_kwargs(**extract_overrides: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        graph = build_graph(
+            extraction_mode="pdf",
+            extract_params=ExtractParams(method="fused", **extract_overrides),
+            stage_order=("extract",),
+        )
+
+        def find(node: Any) -> Any:
+            if getattr(node.operator, "name", node.name) == "FusedExtractionActor":
+                return node.operator
+            for child in node.children:
+                found = find(child)
+                if found is not None:
+                    return found
+            return None
+
+        for root in graph.roots:
+            operator = find(root)
+            if operator is not None:
+                return dict(operator.fused_kwargs), dict(operator._model_kwargs)
+        raise AssertionError("no FusedExtractionActor in the graph")
+
+    def test_ocr_version_reaches_the_actor(self) -> None:
+        _, model_kwargs = self._fused_node_kwargs(ocr_version="v1")
+
+        assert model_kwargs["ocr_version"] == "v1"
+
+    def test_ocr_lang_reaches_the_actor(self) -> None:
+        _, model_kwargs = self._fused_node_kwargs(ocr_version="v2", ocr_lang="english")
+
+        assert model_kwargs["ocr_lang"] == "english"
+
+    def test_defaults_are_v2_multilingual(self) -> None:
+        _, model_kwargs = self._fused_node_kwargs()
+
+        assert model_kwargs == {"ocr_version": "v2", "ocr_lang": None}
+
+    def test_selectors_configure_the_model_not_the_batch_call(self) -> None:
+        """They pick which weights load, so they must not reach the compute fn."""
+        compute_kwargs, _ = self._fused_node_kwargs(ocr_version="v2", ocr_lang="english")
+
+        assert "ocr_version" not in compute_kwargs
+        assert "ocr_lang" not in compute_kwargs
+
+    def test_v1_moves_the_repo_id_off_the_v2_mirror(self) -> None:
+        fused_config = pytest.importorskip("nemo_retriever_fused.config")
+        from nemo_retriever.common.modality.fused.shared import build_fused_config
+
+        assert fused_config is not None
+        config = build_fused_config(ocr_version="v1")
+
+        assert config.ocr.version == "v1"
+        assert config.ocr.repo_id == "nvidia/nemotron-ocr-v1"
+
+    def test_warmup_spec_carries_the_selectors(self) -> None:
+        spec = build_warmup_spec({"method": "fused", "ocr_version": "v2", "ocr_lang": "english"}, None, None)
+
+        assert spec is not None
+        assert spec["stages"] == ["fused"]
+        assert spec["ocr_version"] == "v2"
+        assert spec["ocr_lang"] == "english"
+
+
 class TestServiceConfigPlumbing:
     """``local_models.extract.method`` must reach ``ExtractParams``."""
 
