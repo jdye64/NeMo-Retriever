@@ -54,7 +54,26 @@ def _counts_by_label(detections: Sequence[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def load_fused_model(**model_kwargs: Any) -> Any:
+def build_fused_config(*, ocr_version: str = "v2", ocr_lang: str | None = None) -> Any:
+    """Return a fused pipeline config carrying the OCR selectors.
+
+    ``ExtractParams`` exposes ``ocr_version`` and ``ocr_lang`` for the staged
+    OCR actor, and the fused OCR stage accepts the same selectors, so they must
+    be forwarded rather than silently defaulted. The v1 pipeline lives in its
+    own repository, so the repo id moves with the version.
+    """
+    from nemo_retriever_fused.config import FusedPipelineConfig
+
+    config = FusedPipelineConfig()
+    config.ocr.version = ocr_version
+    if ocr_version == "v1":
+        config.ocr.repo_id = "nvidia/nemotron-ocr-v1"
+    elif ocr_lang is not None:
+        config.ocr.lang = ocr_lang
+    return config
+
+
+def load_fused_model(*, ocr_version: str = "v2", ocr_lang: str | None = None) -> Any:
     """Return a loaded fused model, preferring one warmed into this process.
 
     Raises
@@ -75,7 +94,7 @@ def load_fused_model(**model_kwargs: Any) -> Any:
     except ImportError as exc:  # pragma: no cover - depends on optional install
         raise ImportError(FUSED_IMPORT_HINT) from exc
 
-    return NemoRetrieverFusedModel.from_pretrained(**model_kwargs)
+    return NemoRetrieverFusedModel.from_pretrained(build_fused_config(ocr_version=ocr_version, ocr_lang=ocr_lang))
 
 
 def _page_image_b64(row: Any) -> str | None:

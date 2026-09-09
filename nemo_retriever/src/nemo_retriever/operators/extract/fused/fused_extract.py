@@ -54,13 +54,19 @@ class FusedExtractionActor(AbstractOperator, GPUOperator):
     def __init__(self, **fused_kwargs: Any) -> None:
         super().__init__(**fused_kwargs)
         self.fused_kwargs = dict(fused_kwargs)
+        # The OCR selectors pick which weights load, so they configure the
+        # model rather than the per-batch call.
+        self._model_kwargs = {
+            "ocr_version": self.fused_kwargs.pop("ocr_version", "v2"),
+            "ocr_lang": self.fused_kwargs.pop("ocr_lang", None),
+        }
         # Loading is deferred to the first batch so graph construction stays
         # cheap and importable on hosts without the optional package or a GPU.
         self._model: Any = None
 
     def _ensure_model(self) -> Any:
         if self._model is None:
-            self._model = load_fused_model()
+            self._model = load_fused_model(**self._model_kwargs)
         return self._model
 
     def preprocess(self, data: Any, **kwargs: Any) -> Any:

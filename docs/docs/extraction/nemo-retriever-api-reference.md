@@ -108,6 +108,11 @@ configurations that contradict that design. Each of the following raises a
 `True` in fused mode, because the fused model reads the page raster directly.
 This applies even when you pass `extract_page_as_image=False`.
 
+The fused OCR stage honors `ocr_version` and `ocr_lang`, so they select the OCR
+weights the same way they do for the staged OCR actor. The defaults are
+`ocr_version="v2"` and multilingual OCR. Both selectors determine which weights
+load, so a change to either one requires a new fused model instance.
+
 Tune the fused stage with `FusedTuningParams` on `ExtractParams.fused_tuning`.
 Import the model from `nemo_retriever.common.params`. Because the fused stage
 holds the whole model stack in one process, you tune it as one actor pool

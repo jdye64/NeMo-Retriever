@@ -863,7 +863,10 @@ def build_graph(
                 "extract_infographics": extract_params.extract_infographics,
                 "use_table_structure": extract_params.use_table_structure,
                 "embed_pages": fused_absorbs_embed(extract_params, embed_params),
+                "ocr_version": getattr(extract_params, "ocr_version", "v2"),
             }
+            if getattr(extract_params, "ocr_lang", None) is not None:
+                fused_kwargs["ocr_lang"] = extract_params.ocr_lang
             if fused_kwargs["embed_pages"]:
                 fused_kwargs["embed_output_column"] = embed_params.embed_output_column
                 fused_kwargs["embedding_dim_column"] = embed_params.embedding_dim_column

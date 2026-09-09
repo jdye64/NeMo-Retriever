@@ -138,7 +138,9 @@ for the validation rules and the optional package requirement.
 Size `fused_workers` multiplied by `fused_gpus_per_actor` to the GPU capacity
 that Ray reports for the cluster. Because the default reserves a whole GPU for
 each actor, a request for more fused actors than available GPUs cannot
-schedule.
+schedule. The shared preflight validates the fused pool along with every other
+operator pool, so an infeasible request raises before Ray work starts rather
+than stalling on an unschedulable actor.
 
 ## Shared preflight for custom Ray Data graphs
 
