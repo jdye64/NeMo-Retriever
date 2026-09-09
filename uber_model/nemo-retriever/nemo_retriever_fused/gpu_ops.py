@@ -524,7 +524,7 @@ def tile_for_vl_tower(
     image:
         ``[C, H, W]`` CUDA tensor in 0-255 space.
     tile_size:
-        Tile side length, 448 for this model family.
+        Tile side length, 512 for this model family.
     min_tiles, max_tiles:
         Bounds on the tile count, matching the processor's `min_num`/`max_num`.
     use_thumbnail:

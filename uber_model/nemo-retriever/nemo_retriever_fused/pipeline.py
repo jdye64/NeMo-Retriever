@@ -223,9 +223,15 @@ class NemoRetrieverFusedModel:
         *,
         page_ids: Sequence[str] | None = None,
         embed_elements: bool = False,
+        embed_pages: bool = True,
     ) -> FusedResult:
         """Alias for `forward`, so the model is callable like an `nn.Module`."""
-        return self.forward(pages, page_ids=page_ids, embed_elements=embed_elements)
+        return self.forward(
+            pages,
+            page_ids=page_ids,
+            embed_elements=embed_elements,
+            embed_pages=embed_pages,
+        )
 
     def forward(
         self,
@@ -233,6 +239,7 @@ class NemoRetrieverFusedModel:
         *,
         page_ids: Sequence[str] | None = None,
         embed_elements: bool = False,
+        embed_pages: bool = True,
     ) -> FusedResult:
         """Run every enabled stage over *pages* in a single invocation.
 
@@ -314,12 +321,15 @@ class NemoRetrieverFusedModel:
         page_embeddings: torch.Tensor | None = None
         element_embeddings: torch.Tensor | None = None
 
-        if self._embed is not None:
+        # Embedding is the most expensive stage, so skip it when the caller
+        # keeps a dedicated embed stage downstream and would discard these.
+        if self._embed is not None and (embed_pages or embed_elements):
             with _nvtx(execution.nvtx, "fused/embed"), timer.stage("embed", len(batch)):
-                page_result = self._embed.embed_images(page_floats)
-                page_embeddings = page_result.vectors
-                for index, page in enumerate(pages_out):
-                    page.embedding = page_embeddings[index]
+                if embed_pages:
+                    page_result = self._embed.embed_images(page_floats)
+                    page_embeddings = page_result.vectors
+                    for index, page in enumerate(pages_out):
+                        page.embedding = page_embeddings[index]
 
                 if embed_elements and plan.all_crops:
                     element_result = self._embed.embed_images(plan.all_crops)
