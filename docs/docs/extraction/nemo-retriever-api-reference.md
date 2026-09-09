@@ -187,7 +187,7 @@ To tune splitter throughput from the CLI, use `--pdf-split-batch-size` (Ray acto
 
 ## Page tracing parameters { #page-tracing-parameters }
 
-`IngestExecuteParams` and `.ingest()` accept two page-tracing parameters in every run mode. `page_trace_detail` selects how much per-page timing the pipeline records. The supported values are `"off"`, `"operator"`, and `"full"`. The parameter is unset by default so that `NEMO_RETRIEVER_PAGE_TRACE_DETAIL` still applies. The effective default is `"operator"` for `run_mode="inprocess"` and `"batch"`, and `"off"` for `run_mode="service"`, where the trace has to be transmitted on every status response rather than kept in the local process. `return_page_traces` defaults to `False`. Set it to `True` to receive the collected traces alongside the ingest results; in service mode that also opts the request into tracing.
+`IngestExecuteParams` and `.ingest()` accept two page-tracing parameters in every run mode. `page_trace_detail` selects whether the pipeline records per-page timings. The supported values are `"off"` and `"operator"`. The parameter is unset by default so that `NEMO_RETRIEVER_PAGE_TRACE_DETAIL` still applies. The effective default is `"operator"` for `run_mode="inprocess"` and `"batch"`, and `"off"` for `run_mode="service"`, where the trace has to be transmitted on every status response rather than kept in the local process. `return_page_traces` defaults to `False`. Set it to `True` to receive the collected traces alongside the ingest results; in service mode that also opts the request into tracing.
 
 Every ingestor that `create_ingestor()` returns also provides `.save_page_traces(output_directory=..., compression=...)`, which writes one trace JSON file per document. `compression` accepts `None` for plain JSON or `"gzip"`.
 
@@ -200,7 +200,7 @@ ingestor = (
     .extract()
     .save_page_traces(output_directory="traces/")
 )
-results = ingestor.ingest(page_trace_detail="full")
+results = ingestor.ingest(page_trace_detail="operator")
 ```
 
 When you request extras, `.ingest()` appends them in the fixed order `failures`, `traces`, `page_traces` for whichever of `return_failures`, `return_traces`, and `return_page_traces` you set. For example, `return_failures=True` with `return_page_traces=True` returns `(results, failures, page_traces)`.

@@ -21,7 +21,7 @@ from contextlib import contextmanager
 
 import torch.cuda.nvtx as _nvtx
 
-from nemo_retriever.common.tracing.spans import model_span
+from nemo_retriever.common.tracing.runtime import record_model
 
 
 @contextmanager
@@ -33,11 +33,11 @@ def gpu_inference_range(model_name: str, batch_size: int = -1, **extra):
     The inner range carries the human-readable label visible in
     the Nsight Systems timeline (e.g. ``NemotronOCRv1 | bs=8``).
 
-    Every local GPU model already wraps its forward pass in this helper, so it
-    doubles as the page trace hook for on-device inference. The trace span
-    records only entry and exit times around the call; it does not synchronize
-    CUDA, so the pipeline runs the same whether or not tracing is on. Attach
-    Nsight Systems to the NVTX ranges when you need device-level attribution.
+    Every local GPU model wraps its forward pass in this helper, so it is also
+    where the page trace learns which local model ran. Only the model identity
+    is recorded, not a separate timing span: the enclosing operator span
+    already covers the call. Attach Nsight Systems to the NVTX ranges when you
+    need device-level attribution.
     """
     parts = [model_name]
     if batch_size >= 0:
@@ -47,17 +47,9 @@ def gpu_inference_range(model_name: str, batch_size: int = -1, **extra):
     label = " | ".join(parts)
     _nvtx.range_push("gpu_inference")
     _nvtx.range_push(label)
+    record_model(model_name, name=model_name, backend="local-gpu")
     try:
-        with model_span(
-            model_name,
-            name=model_name,
-            backend="local-gpu",
-            category="gpu",
-            span_name=f"gpu.{model_name}",
-            batch_size=batch_size if batch_size >= 0 else None,
-            attrs={key: str(value) for key, value in extra.items()},
-        ):
-            yield
+        yield
     finally:
         _nvtx.range_pop()
         _nvtx.range_pop()

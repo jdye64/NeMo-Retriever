@@ -23,7 +23,7 @@ import socket
 import threading
 from typing import Any, Final, Literal, get_args
 
-TraceDetail = Literal["off", "operator", "full"]
+TraceDetail = Literal["off", "operator"]
 
 TRACE_DETAIL_ENV_VAR: Final = "NEMO_RETRIEVER_PAGE_TRACE_DETAIL"
 DEFAULT_TRACE_DETAIL: Final[TraceDetail] = "operator"
@@ -52,8 +52,6 @@ def normalize_detail(value: Any) -> TraceDetail:
         return "off"
     if candidate in {"1", "true", "yes", "on"}:
         return "operator"
-    if candidate in {"all", "verbose", "detailed"}:
-        return "full"
     return DEFAULT_TRACE_DETAIL
 
 
@@ -88,11 +86,6 @@ def reset_detail() -> None:
 def tracing_enabled() -> bool:
     """Return whether any tracing should be recorded."""
     return get_detail() != "off"
-
-
-def full_detail_enabled() -> bool:
-    """Return whether curated hot-spot spans should be recorded."""
-    return get_detail() == "full"
 
 
 def worker_label() -> str:

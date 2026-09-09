@@ -334,7 +334,7 @@ class IngestExecuteParams(_ParamsModel):
     # service run mode returns raw HTTP/SSE protocol events. Left unset so
     # NEMO_RETRIEVER_PAGE_TRACE_DETAIL still applies; the effective default
     # when neither is given is "operator".
-    page_trace_detail: Optional[Literal["off", "operator", "full"]] = None
+    page_trace_detail: Optional[Literal["off", "operator"]] = None
     return_page_traces: bool = False
     return_results: bool = True
     result_schema: Literal["legacy", "compact"] = "legacy"

@@ -12,6 +12,7 @@ import traceback
 import pandas as pd
 from nemo_retriever.models.nim.error_reporter import report_error
 from nemo_retriever.common.params import RemoteRetryParams
+from nemo_retriever.common.tracing import record_page_work
 
 if TYPE_CHECKING:
     from nemo_retriever.models.nim.nim import NIMClient
@@ -375,6 +376,9 @@ def table_structure_ocr_page_elements(
                 continue
 
             crops = _crop_all_from_page(page_image_b64, dets, {"table"})
+            # Structure recognition runs over the flattened crop list, so a
+            # page's share of the cost follows its table count.
+            record_page_work(getattr(row, "source_id", None), table_crops=len(crops))
             if not crops:
                 continue
 

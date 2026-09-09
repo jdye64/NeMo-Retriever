@@ -61,36 +61,58 @@ def _normalize_key(value: Any) -> str | None:
     return text
 
 
-def encode_payload(spans: list[dict[str, Any]], models: list[dict[str, Any]]) -> str:
-    """Serialize a row's accumulated spans and model descriptors."""
+def _work_identity(record: dict[str, Any]) -> tuple[Any, Any]:
+    """Return the dedupe key for a work record.
+
+    One operator invocation records a separate count for each page it covered,
+    so the span id alone would collapse sibling pages into one another.
+    """
+    return record.get("span_id"), record.get("source_id")
+
+
+def encode_payload(
+    spans: list[dict[str, Any]],
+    models: list[dict[str, Any]],
+    work: list[dict[str, Any]] | None = None,
+) -> str:
+    """Serialize a row's accumulated spans, model descriptors, and work counts."""
     payload: dict[str, Any] = {"v": PAYLOAD_VERSION, "spans": spans}
     if models:
         payload["models"] = models
+    if work:
+        payload["work"] = work
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def decode_payload(raw: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Parse a row's trace payload into ``(spans, models)``.
+def decode_payload_full(
+    raw: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Parse a row's trace payload into ``(spans, models, work)``.
 
     Malformed payloads yield empty results rather than failing the pipeline;
     tracing must never be the reason an ingest run dies.
     """
     text = _normalize_key(raw)
     if text is None:
-        return [], []
+        return [], [], []
     try:
         payload = json.loads(text)
     except (TypeError, ValueError):
         logger.debug("Discarding unparseable page trace payload.")
-        return [], []
+        return [], [], []
     if not isinstance(payload, dict):
-        return [], []
-    spans = payload.get("spans")
-    models = payload.get("models")
-    return (
-        [item for item in spans if isinstance(item, dict)] if isinstance(spans, list) else [],
-        [item for item in models if isinstance(item, dict)] if isinstance(models, list) else [],
-    )
+        return [], [], []
+
+    def _dicts(value: Any) -> list[dict[str, Any]]:
+        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    return _dicts(payload.get("spans")), _dicts(payload.get("models")), _dicts(payload.get("work"))
+
+
+def decode_payload(raw: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Parse a row's trace payload into ``(spans, models)``."""
+    spans, models, _ = decode_payload_full(raw)
+    return spans, models
 
 
 class BatchTraceCollector:
@@ -100,11 +122,14 @@ class BatchTraceCollector:
         self.operator_name = operator_name
         self.batch_size = int(len(frame))
         self._spans: list[Span] = []
-        self._accumulated: dict[tuple[Any, ...], Span] = {}
         self._inherited_by_key: dict[str, list[dict[str, Any]]] = {}
         self._inherited_by_path: dict[str, list[dict[str, Any]]] = {}
         self._inherited_models: list[dict[str, Any]] = []
         self._single_input_spans: list[dict[str, Any]] | None = None
+        self._work: dict[str, dict[str, float]] = {}
+        self._inherited_work_by_key: dict[str, list[dict[str, Any]]] = {}
+        self._inherited_work_by_path: dict[str, list[dict[str, Any]]] = {}
+        self._single_input_work: list[dict[str, Any]] | None = None
         self._read_input(frame)
 
     def _read_input(self, frame: pd.DataFrame) -> None:
@@ -117,57 +142,54 @@ class BatchTraceCollector:
 
         seen_models: set[tuple[Any, ...]] = set()
         for raw, source_id, path in zip(raw_traces, source_ids, paths):
-            spans, models = decode_payload(raw)
+            spans, models, work = decode_payload_full(raw)
             for descriptor in models:
                 identity = model_identity(descriptor)
                 if identity not in seen_models:
                     seen_models.add(identity)
                     self._inherited_models.append(descriptor)
-            if not spans:
-                continue
             key = _normalize_key(source_id)
+            path_key = _normalize_key(path)
             if key is not None:
-                self._inherited_by_key.setdefault(key, []).extend(spans)
+                if spans:
+                    self._inherited_by_key.setdefault(key, []).extend(spans)
+                if work:
+                    self._inherited_work_by_key.setdefault(key, []).extend(work)
                 continue
             # Only rows that predate page identity define document-level
             # lineage. Indexing page rows by path too would let one page
             # inherit every sibling page's spans on a fallback lookup.
-            path_key = _normalize_key(path)
             if path_key is not None:
-                bucket = self._inherited_by_path.setdefault(path_key, [])
-                known = {item.get("span_id") for item in bucket}
-                bucket.extend(item for item in spans if item.get("span_id") not in known)
+                if spans:
+                    bucket = self._inherited_by_path.setdefault(path_key, [])
+                    known = {item.get("span_id") for item in bucket}
+                    bucket.extend(item for item in spans if item.get("span_id") not in known)
+                if work:
+                    work_bucket = self._inherited_work_by_path.setdefault(path_key, [])
+                    known_work = {_work_identity(item) for item in work_bucket}
+                    work_bucket.extend(item for item in work if _work_identity(item) not in known_work)
 
         if len(raw_traces) == 1:
-            spans, _ = decode_payload(raw_traces[0])
+            spans, _, work = decode_payload_full(raw_traces[0])
             self._single_input_spans = spans
+            self._single_input_work = work
 
     def add(self, span: Span) -> None:
         """Record a completed span."""
         self._spans.append(span)
 
-    def accumulated_span(self, key: tuple[Any, ...], factory: Any) -> Span:
-        """Return the rolled-up span for *key*, creating it on first use.
-
-        Helpers called once per image crop would otherwise emit hundreds of
-        spans per page. Folding them into one span per operator invocation
-        keeps the artifact small while still reporting where the time went.
-        Spans are serialized at :meth:`finish`, so mutating the returned object
-        afterwards is safe.
-        """
-        span = self._accumulated.get(key)
-        if span is None:
-            span = factory()
-            self._accumulated[key] = span
-            self._spans.append(span)
-        return span
+    def add_work(self, source_id: str, counts: dict[str, float]) -> None:
+        """Accumulate per-page work counters for this operator invocation."""
+        bucket = self._work.setdefault(source_id, {})
+        for key, value in counts.items():
+            bucket[key] = bucket.get(key, 0.0) + value
 
     def make_operator_span(self, span_id: str, *, status: str = "ok", error: str | None = None) -> Span:
         """Create the batch-scoped span representing this operator invocation."""
         return Span(
             span_id=span_id,
             name=self.operator_name,
-            category="operator",
+            kind="operator",
             operator=self.operator_name,
             batch_size=self.batch_size,
             status=status,
@@ -189,6 +211,19 @@ class BatchTraceCollector:
         # input row the lineage is unambiguous, so carry its spans forward.
         if self.batch_size == 1 and self._single_input_spans:
             return self._single_input_spans
+        return []
+
+    def _inherited_work_for(self, key: str | None, path: str | None) -> list[dict[str, Any]]:
+        if key is not None:
+            inherited = self._inherited_work_by_key.get(key)
+            if inherited:
+                return inherited
+        if path is not None:
+            inherited = self._inherited_work_by_path.get(path)
+            if inherited:
+                return inherited
+        if self.batch_size == 1 and self._single_input_work:
+            return self._single_input_work
         return []
 
     def finish(self, frame: Any) -> Any:
@@ -230,6 +265,20 @@ class BatchTraceCollector:
                 known_models.add(identity)
                 models.append(descriptor)
 
+        # Work counters recorded this invocation belong to the operator span,
+        # which the tracer has already closed by the time ``finish`` runs.
+        operator_span_id = next((span.span_id for span in self._spans if span.kind == "operator"), None)
+        recorded_work = {
+            source_id: {
+                "span_id": operator_span_id,
+                "operator": self.operator_name,
+                "source_id": source_id,
+                "metrics": {key: round(value, 3) for key, value in metrics.items()},
+            }
+            for source_id, metrics in self._work.items()
+            if metrics and source_id in output_keys
+        }
+
         payloads: list[str] = []
         for source_id, path in zip(source_ids, paths):
             key = _normalize_key(source_id)
@@ -246,7 +295,21 @@ class BatchTraceCollector:
                     continue
                 seen.add(span_id)
                 combined.append(span)
-            payloads.append(encode_payload(combined, models))
+
+            combined_work: list[dict[str, Any]] = []
+            seen_work: set[tuple[Any, Any]] = set()
+            own_work = recorded_work.get(key) if key is not None else None
+            for record in (
+                *self._inherited_work_for(key, path_key),
+                *((own_work,) if own_work else ()),
+            ):
+                identity = _work_identity(record)
+                if identity in seen_work:
+                    continue
+                seen_work.add(identity)
+                combined_work.append(record)
+
+            payloads.append(encode_payload(combined, models, combined_work))
 
         # Assign the list positionally. Building a Series first would align on
         # the frame index, which stages that rebuild rows can leave duplicated.

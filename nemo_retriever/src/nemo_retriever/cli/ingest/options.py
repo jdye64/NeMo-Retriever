@@ -24,7 +24,7 @@ from nemo_retriever.models import VL_EMBED_MODEL
 DEFAULT_EMBED_MODEL = VL_EMBED_MODEL
 DEFAULT_CAPTION_MODEL = CaptionParams().model_name
 
-PageTraceDetailValue = Literal["off", "operator", "full"]
+PageTraceDetailValue = Literal["off", "operator"]
 
 DocumentsArgument = Annotated[
     list[str],
@@ -466,9 +466,8 @@ PageTraceDetailOption = Annotated[
         "--page-trace-detail",
         envvar=TRACE_DETAIL_ENV_VAR,
         help=(
-            "Page trace granularity: off disables tracing; operator (default) times each pipeline "
-            "stage; full adds entry and exit times for network calls, GPU forwards, and heavy "
-            "dependency work inside each stage."
+            "Page trace granularity: operator (default) times each pipeline stage per page; "
+            "off disables tracing."
         ),
     ),
 ]

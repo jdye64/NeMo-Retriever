@@ -26,7 +26,7 @@ def _span(
     *,
     page: int,
     name: str,
-    category: str,
+    kind: str,
     duration_ms: float,
     amortized_ms: float,
     parent: str | None = None,
@@ -41,8 +41,8 @@ def _span(
         "span_id": span_id,
         "parent_span_id": parent,
         "name": name,
-        "category": category,
-        "operator": "ExtractActor" if category != "operator" else name,
+        "kind": kind,
+        "operator": "ExtractActor" if kind != "operator" else name,
         "model_key": model_key,
         "start_ms": 1_000.0,
         "end_ms": 1_000.0 + duration_ms,
@@ -68,7 +68,7 @@ def _fixture_trace() -> dict[str, Any]:
                 "op1",
                 page=page,
                 name="ExtractActor",
-                category="operator",
+                kind="operator",
                 duration_ms=200.0,
                 amortized_ms=100.0,
             )
@@ -78,7 +78,7 @@ def _fixture_trace() -> dict[str, Any]:
                 "net1",
                 page=page,
                 name="nim.infer",
-                category="network",
+                kind="child",
                 duration_ms=120.0,
                 amortized_ms=60.0,
                 parent="op1",
@@ -121,7 +121,6 @@ def _fixture_trace() -> dict[str, Any]:
                     "pct_of_total": 100.0,
                 }
             ],
-            "by_category": {"operator_ms": 200.0, "network_ms": 120.0, "gpu_ms": 0.0, "cpu_ms": 0.0, "io_ms": 0.0},
             "by_model": {"ocr": 120.0},
         },
         "page_summaries": [
@@ -132,7 +131,6 @@ def _fixture_trace() -> dict[str, Any]:
                 "wall_ms": 100.0,
                 "span_count": 2,
                 "by_operator": {"ExtractActor": 100.0},
-                "by_category": {"operator_ms": 100.0, "network_ms": 60.0, "gpu_ms": 0.0, "cpu_ms": 0.0, "io_ms": 0.0},
             },
             {
                 "page_number": 2,
@@ -141,7 +139,6 @@ def _fixture_trace() -> dict[str, Any]:
                 "wall_ms": 100.0,
                 "span_count": 2,
                 "by_operator": {"ExtractActor": 100.0},
-                "by_category": {"operator_ms": 100.0, "network_ms": 60.0, "gpu_ms": 0.0, "cpu_ms": 0.0, "io_ms": 0.0},
             },
         ],
         "spans": spans,
@@ -202,11 +199,8 @@ def test_summary_json_matches_the_rendered_rollup(trace_dir: Path) -> None:
     assert payload["total_ms"] == pytest.approx(200.0)
     assert payload["ms_per_page"] == pytest.approx(100.0)
     assert payload["by_operator"][0]["operator"] == "ExtractActor"
-    # The operator category is the denominator for the others, not a peer row.
-    categories = {entry["category"] for entry in payload["by_category"]}
-    assert "operator" not in categories
-    network = next(entry for entry in payload["by_category"] if entry["category"] == "network")
-    assert network["pct_of_total"] == pytest.approx(60.0)
+    assert payload["by_operator"][0]["pct_of_total"] == pytest.approx(100.0)
+    assert payload["by_model"][0]["model_key"] == "ocr"
 
 
 def test_summary_accepts_globs_and_multiple_files(multi_trace_dir: Path) -> None:
@@ -222,23 +216,6 @@ def test_summary_top_limits_ranked_rows(multi_trace_dir: Path) -> None:
     result = RUNNER.invoke(cli_main.app, ["trace", str(multi_trace_dir), "--top", "1"])
     assert result.exit_code == 0, result.output
     assert "Slowest pages (top 1)" in result.output
-
-
-def test_summary_hints_when_only_operator_spans_were_recorded(tmp_path: Path) -> None:
-    trace = _fixture_trace()
-    trace["document_summary"]["by_category"] = {
-        "operator_ms": 200.0,
-        "network_ms": 0.0,
-        "gpu_ms": 0.0,
-        "cpu_ms": 0.0,
-        "io_ms": 0.0,
-    }
-    directory = tmp_path / "operator-only"
-    write_document_trace(trace, directory)
-
-    result = RUNNER.invoke(cli_main.app, ["trace", str(directory)])
-    assert result.exit_code == 0, result.output
-    assert "--page-trace-detail full" in result.output
 
 
 def test_page_renders_the_span_waterfall(trace_dir: Path) -> None:

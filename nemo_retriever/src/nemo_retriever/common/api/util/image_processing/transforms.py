@@ -13,7 +13,6 @@ from io import BytesIO
 from PIL import Image
 
 from nemo_retriever.common.api.util.converters import bytetools
-from nemo_retriever.common.tracing.spans import accumulate as accumulate_trace
 
 try:
     import cv2
@@ -650,20 +649,17 @@ def numpy_to_base64(array: np.ndarray, format: str = "PNG", **kwargs) -> str:
     if format == "JPG":
         format = "JPEG"
 
-    # This runs once per image crop, so the page trace rolls every call in an
-    # operator invocation into one span rather than emitting hundreds.
-    with accumulate_trace(f"image.encode.{format.lower()}", category="cpu"):
-        # _preprocess_numpy_array converts RGB→BGR for OpenCV; skip it when cv2 is unavailable
-        # since numpy_to_base64_png/jpeg already handle the PIL fallback path with RGB input.
-        processed_array = _preprocess_numpy_array(array) if cv2 is not None else array
+    # _preprocess_numpy_array converts RGB→BGR for OpenCV; skip it when cv2 is unavailable
+    # since numpy_to_base64_png/jpeg already handle the PIL fallback path with RGB input.
+    processed_array = _preprocess_numpy_array(array) if cv2 is not None else array
 
-        if format == "PNG":
-            return numpy_to_base64_png(processed_array)
-        elif format == "JPEG":
-            quality = kwargs.get("quality", 100)
-            return numpy_to_base64_jpeg(processed_array, quality=quality)
-        else:
-            raise ValueError(f"Unsupported format: {format}. Supported formats are 'PNG' and 'JPEG'.")
+    if format == "PNG":
+        return numpy_to_base64_png(processed_array)
+    elif format == "JPEG":
+        quality = kwargs.get("quality", 100)
+        return numpy_to_base64_jpeg(processed_array, quality=quality)
+    else:
+        raise ValueError(f"Unsupported format: {format}. Supported formats are 'PNG' and 'JPEG'.")
 
 
 def base64_to_numpy(base64_string: str) -> np.ndarray:
@@ -700,11 +696,6 @@ def base64_to_numpy(base64_string: str) -> np.ndarray:
     >>> img_array.shape
     (4, 4, 3)
     """
-    with accumulate_trace("image.decode.base64", category="cpu"):
-        return _base64_to_numpy(base64_string)
-
-
-def _base64_to_numpy(base64_string: str) -> np.ndarray:
     try:
         # Decode the base64 string to bytes using bytetools
         image_bytes = bytetools.bytesfrombase64(base64_string)

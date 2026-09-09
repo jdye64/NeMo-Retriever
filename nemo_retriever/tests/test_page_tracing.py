@@ -37,7 +37,7 @@ from nemo_retriever.common.tracing import (
 from nemo_retriever.common.tracing import runtime as trace_runtime
 from nemo_retriever.common.tracing.collector import BatchTraceCollector, operator_trace
 from nemo_retriever.common.tracing.load import TraceFileError
-from nemo_retriever.common.tracing.spans import accumulate, model_span, page_scope
+from nemo_retriever.common.tracing.spans import page_scope
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 
 DOC_A = "/data/a.pdf"
@@ -74,24 +74,23 @@ def _page_frame(path: str, pages: range | list[int], *, doc: str | None = None) 
 
 
 def test_normalize_detail_accepts_levels_and_boolean_spellings() -> None:
-    assert normalize_detail("full") == "full"
     assert normalize_detail("OPERATOR") == "operator"
     assert normalize_detail("false") == "off"
-    assert normalize_detail("verbose") == "full"
+    assert normalize_detail("true") == "operator"
     # Unset and unrecognized values both fall back to the documented default.
     assert normalize_detail(None) == "operator"
     assert normalize_detail("banana") == "operator"
 
 
 def test_detail_reads_environment_when_no_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(trace_runtime.TRACE_DETAIL_ENV_VAR, "full")
-    assert trace_runtime.get_detail() == "full"
-    assert trace_runtime.full_detail_enabled()
+    monkeypatch.setenv(trace_runtime.TRACE_DETAIL_ENV_VAR, "off")
+    assert trace_runtime.get_detail() == "off"
+    assert not trace_runtime.tracing_enabled()
 
     trace_runtime.set_detail("operator")
     # An explicit process-local override wins over the environment.
     assert trace_runtime.get_detail() == "operator"
-    assert not trace_runtime.full_detail_enabled()
+    assert trace_runtime.tracing_enabled()
 
 
 def test_tracing_disabled_is_a_no_op() -> None:
@@ -102,7 +101,7 @@ def test_tracing_disabled_is_a_no_op() -> None:
         pass
 
     with operator_trace(Op(), frame) as tracer:
-        with span("should-not-record", category="cpu"):
+        with span("should-not-record"):
             pass
         result = tracer.finish(frame)
 
@@ -111,27 +110,11 @@ def test_tracing_disabled_is_a_no_op() -> None:
 
 
 def test_span_outside_an_operator_is_a_no_op() -> None:
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
     # No collector installed: the context manager must still be usable.
-    with span("orphan", category="network") as handle:
+    with span("orphan") as handle:
         handle.set_attr("endpoint", "http://example/v1")
     assert handle.span_id == ""
-
-
-def test_full_detail_spans_are_filtered_at_operator_detail() -> None:
-    trace_runtime.set_detail("operator")
-    frame = _page_frame(DOC_A, [1])
-
-    class Op:
-        pass
-
-    with operator_trace(Op(), frame) as tracer:
-        with span("hot-spot", category="network", detail="full"):
-            pass
-        result = tracer.finish(frame)
-
-    spans, _ = decode_payload(result[TRACE_COLUMN].iloc[0])
-    assert [item["name"] for item in spans] == ["Op"]
 
 
 def test_tracing_never_synchronizes_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,20 +136,18 @@ def test_tracing_never_synchronizes_cuda(monkeypatch: pytest.MonkeyPatch) -> Non
     fake_torch.cuda = fake_cuda  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
     frame = _page_frame(DOC_A, [1])
 
     class Op:
         pass
 
     with operator_trace(Op(), frame) as tracer:
-        with model_span("nemotron-ocr", category="gpu", span_name="gpu.nemotron-ocr"):
-            pass
         result = tracer.finish(frame)
 
     assert calls == []
     spans, _ = decode_payload(result[TRACE_COLUMN].iloc[0])
-    assert "gpu.nemotron-ocr" in [item["name"] for item in spans]
+    assert [item["name"] for item in spans] == ["Op"]
 
 
 # ---------------------------------------------------------------------------
@@ -174,22 +155,26 @@ def test_tracing_never_synchronizes_cuda(monkeypatch: pytest.MonkeyPatch) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_operator_span_nests_child_spans_and_records_models() -> None:
-    trace_runtime.set_detail("full")
+def test_operator_span_records_the_batch_and_its_models() -> None:
+    """Model identity is reported without timing the model call separately.
+
+    ``record_model`` is the only hook model clients need, so a trace still
+    answers "which version ran" even though the enclosing operator span is
+    the sole timing record.
+    """
+    trace_runtime.set_detail("operator")
     frame = _page_frame(DOC_A, [1, 2, 3, 4])
 
     class OCRActor:
         pass
 
     with operator_trace(OCRActor(), frame) as tracer:
-        with model_span("ocr", name="nvidia/nemoretriever-ocr-v1", version="v2", backend="nim-grpc"):
-            pass
+        record_model("ocr", name="nvidia/nemoretriever-ocr-v1", version="v2", backend="nim-grpc")
         result = tracer.finish(frame)
 
     spans, models = decode_payload(result[TRACE_COLUMN].iloc[0])
     by_name = {item["name"]: item for item in spans}
-    assert set(by_name) == {"OCRActor", "model.ocr"}
-    assert by_name["model.ocr"]["parent_span_id"] == by_name["OCRActor"]["span_id"]
+    assert set(by_name) == {"OCRActor"}
     assert by_name["OCRActor"]["batch_size"] == 4
     assert models == [
         {
@@ -203,7 +188,7 @@ def test_operator_span_nests_child_spans_and_records_models() -> None:
 
 
 def test_page_scoped_span_is_charged_to_one_page() -> None:
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
     frame = _page_frame(DOC_A, [1, 2])
 
     class ExtractActor:
@@ -211,7 +196,7 @@ def test_page_scoped_span_is_charged_to_one_page() -> None:
 
     with operator_trace(ExtractActor(), frame) as tracer:
         with page_scope(f"{DOC_A}_2"):
-            with span("pdfium.render", category="cpu", detail="full"):
+            with span("pdfium.render"):
                 pass
         result = tracer.finish(frame)
 
@@ -222,26 +207,6 @@ def test_page_scoped_span_is_charged_to_one_page() -> None:
     # A span charged to a single page covers exactly that page.
     assert render["batch_size"] == 1
     assert render["source_id"] == f"{DOC_A}_2"
-
-
-def test_accumulated_spans_fold_repeated_calls() -> None:
-    trace_runtime.set_detail("full")
-    frame = _page_frame(DOC_A, [1])
-
-    class EncodeActor:
-        pass
-
-    with operator_trace(EncodeActor(), frame) as tracer:
-        for _ in range(25):
-            with accumulate("image.encode", category="cpu"):
-                pass
-        result = tracer.finish(frame)
-
-    spans, _ = decode_payload(result[TRACE_COLUMN].iloc[0])
-    encodes = [item for item in spans if item["name"] == "image.encode"]
-    assert len(encodes) == 1
-    assert encodes[0]["attrs"]["calls"] == 25
-    assert encodes[0]["attrs"]["rolled_up"] is True
 
 
 def test_failing_operator_records_an_error_span() -> None:
@@ -258,7 +223,7 @@ def test_failing_operator_records_an_error_span() -> None:
     # The collector recorded the failure; assert via a fresh collector run that
     # the parent stack was released so later spans are not orphaned to it.
     with operator_trace(BoomActor(), frame) as tracer:
-        with span("after", category="cpu"):
+        with span("after"):
             pass
         result = tracer.finish(frame)
     spans, _ = decode_payload(result[TRACE_COLUMN].iloc[0])
@@ -278,7 +243,7 @@ def test_empty_frame_still_declares_the_trace_column() -> None:
 
 
 def test_pages_dropped_from_the_output_keep_their_time_at_batch_scope() -> None:
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
     frame = _page_frame(DOC_A, [1, 2])
 
     class FilterActor:
@@ -286,7 +251,7 @@ def test_pages_dropped_from_the_output_keep_their_time_at_batch_scope() -> None:
 
     with operator_trace(FilterActor(), frame) as tracer:
         with page_scope(f"{DOC_A}_2"):
-            with span("dropped.work", category="cpu", detail="full"):
+            with span("dropped.work"):
                 pass
         result = tracer.finish(frame.iloc[[0]].copy())
 
@@ -336,8 +301,6 @@ class _NetworkOperator(_StubOperator):
 
     def process(self, data: pd.DataFrame, **_: Any) -> pd.DataFrame:
         record_model("ocr", name="nvidia/nemoretriever-ocr-v1", version="v2", backend="nim-http")
-        with span("nim.infer", category="network", model_key="ocr", detail="full"):
-            pass
         return data.copy()
 
 
@@ -365,7 +328,7 @@ def _run_synthetic_graph(*, pages: int = 3, elements: int = 4) -> pd.DataFrame:
 
 
 def test_trace_survives_fan_out_and_dedupes_by_span_id() -> None:
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
     frame = _run_synthetic_graph(pages=3, elements=4)
 
     assert len(frame) == 12
@@ -399,11 +362,11 @@ def test_result_frames_can_be_stripped_of_the_trace_column() -> None:
 
 
 def test_document_level_spans_are_inherited_by_split_pages() -> None:
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
 
     class ConvertOperator(_StubOperator):
         def process(self, data: pd.DataFrame, **_: Any) -> pd.DataFrame:
-            with span("libreoffice.convert", category="io", detail="full"):
+            with span("libreoffice.convert"):
                 pass
             return data.copy()
 
@@ -444,7 +407,7 @@ def _operator_span(span_id: str, name: str, duration_ms: float, *, batch_size: i
         "span_id": span_id,
         "name": name,
         "operator": name,
-        "category": "operator",
+        "kind": "operator",
         "start_ms": 1_000.0,
         "end_ms": 1_000.0 + duration_ms,
         "duration_ms": duration_ms,
@@ -506,7 +469,7 @@ def test_self_time_subtracts_child_spans() -> None:
         "parent_span_id": "s1",
         "name": "nim.infer",
         "operator": "ExtractActor",
-        "category": "network",
+        "kind": "child",
         "start_ms": 1_010.0,
         "end_ms": 1_080.0,
         "duration_ms": 70.0,
@@ -519,7 +482,6 @@ def test_self_time_subtracts_child_spans() -> None:
     by_operator = {entry["operator"]: entry for entry in trace["document_summary"]["by_operator"]}
     assert by_operator["ExtractActor"]["total_ms"] == pytest.approx(100.0)
     assert by_operator["ExtractActor"]["self_ms"] == pytest.approx(30.0)
-    assert trace["document_summary"]["by_category"]["network_ms"] == pytest.approx(70.0)
 
 
 def test_aggregate_returns_nothing_without_a_trace_column() -> None:
@@ -536,14 +498,14 @@ def test_run_and_version_metadata_is_attached() -> None:
         run_mode="batch",
         run_id="run-123",
         pipeline_operators=["ExtractActor"],
-        params={"page_trace_detail": "full"},
+        params={"page_trace_detail": "operator"},
     )
 
     assert trace["schema_version"] == TRACE_SCHEMA_VERSION
     assert trace["run"]["run_id"] == "run-123"
     assert trace["run"]["run_mode"] == "batch"
     assert trace["run"]["completed_at"]
-    assert trace["pipeline"] == {"operators": ["ExtractActor"], "params": {"page_trace_detail": "full"}}
+    assert trace["pipeline"] == {"operators": ["ExtractActor"], "params": {"page_trace_detail": "operator"}}
     assert trace["nemo_retriever"]["version"]
     assert trace["document"]["source_type"] == "pdf"
 
@@ -562,7 +524,7 @@ def test_document_id_is_filesystem_safe_and_path_specific() -> None:
 
 
 def test_write_and_load_round_trip(tmp_path: Any) -> None:
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
     frame = _run_synthetic_graph(pages=2, elements=2)
     traces = aggregate_document_traces(frame)
 
@@ -598,17 +560,17 @@ def test_loading_a_non_trace_file_reports_a_useful_error(tmp_path: Any) -> None:
 
 
 def test_spans_dataframe_is_flat_and_summable() -> None:
-    trace_runtime.set_detail("full")
+    trace_runtime.set_detail("operator")
     traces = aggregate_document_traces(_run_synthetic_graph(pages=3, elements=2))
 
     spans = spans_dataframe(traces)
     assert not spans.empty
-    for column in ("page_number", "operator", "category", "duration_ms", "amortized_ms", "library_version"):
+    for column in ("page_number", "operator", "duration_ms", "amortized_ms", "library_version"):
         assert column in spans.columns
     # json_normalize must not leave nested objects behind in the numeric columns.
     assert spans["amortized_ms"].dtype.kind == "f"
 
-    operator_spans = spans[spans.category == "operator"]
+    operator_spans = spans
     amortized_total = operator_spans.amortized_ms.sum()
     document_total = traces[0]["document_summary"]["total_ms"]
     # Each per-page record is rounded to microseconds before it is written, so

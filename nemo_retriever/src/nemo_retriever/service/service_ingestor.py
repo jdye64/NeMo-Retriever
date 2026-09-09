@@ -1255,7 +1255,7 @@ class ServiceIngestor(ingestor):
             raw image payloads instead of stripping them from transport
             cells. Defaults remain ``False`` to avoid large responses.
         page_trace_detail
-            ``"off"``, ``"operator"`` (default), or ``"full"``. Sent to
+            ``"operator"`` or ``"off"``. Sent to
             the server on the pipeline spec, so the detail level applies
             to the worker that actually runs the pipeline.
         return_page_traces

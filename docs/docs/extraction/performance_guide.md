@@ -16,17 +16,15 @@ Use this guide to document practical recommendations for:
 
 Before you tune worker counts or batch sizes, measure where the time goes. NeMo Retriever Library records a per-page trace of every operator that runs, and aggregates those traces into one JSON file per document.
 
-Operator-level tracing is on by default and adds negligible overhead. To attribute time to individual NIM calls, model forward passes, and file conversions, run at `full` detail. The following command writes traces for a batch ingest. Replace `/path/to/your/pdfs` with a directory of PDF files that you supply.
+Operator-level tracing is on by default and adds negligible overhead. The following command writes traces for a batch ingest. Replace `/path/to/your/pdfs` with a directory of PDF files that you supply.
 
 ```bash
-retriever ingest batch /path/to/your/pdfs \
-  --page-trace-dir traces/ \
-  --page-trace-detail full
+retriever ingest batch /path/to/your/pdfs --page-trace-dir traces/
 
 retriever trace traces/
 ```
 
-The summary ranks operators by total and per-page time, lists the slowest pages, and reports how much of the traced time went to network, GPU, CPU, and I/O work. Use that breakdown to decide whether to add extraction workers, add NIM replicas, or change batch sizes. For the detail levels, the Python API, the trace file schema, and how to aggregate span timings correctly, refer to [Page tracing](page-tracing.md).
+The summary ranks pipeline stages by total and per-page time, lists the slowest pages, and reports the model versions that ran. Use that ranking to decide whether to add extraction workers, add NIM replicas, or change batch sizes. For the Python API, the trace file schema, and how to aggregate span timings correctly, refer to [Page tracing](page-tracing.md).
 
 ## Batch resource sizing
 

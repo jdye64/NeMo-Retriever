@@ -220,22 +220,18 @@ A slow ingest does not raise an error, so start by measuring where the time goes
 Re-run the workload with tracing written to disk, then summarize it:
 
 ```bash
-retriever ingest batch /path/to/your/pdfs \
-  --page-trace-dir traces/ \
-  --page-trace-detail full
+retriever ingest batch /path/to/your/pdfs --page-trace-dir traces/
 
 retriever trace traces/
 ```
 
 Read the result as follows:
 
-- A dominant `network` share in the category table points at a remote NIM. Check endpoint latency, replica count, and HTTP `429` throttling.
-- A dominant `gpu` share points at local model inference. Check GPU utilization and batch sizes.
-- A large `Self` value in the operator table means the time is in a stage that is not yet instrumented at span level.
+- The operator table ranks pipeline stages by total and per-page time. The top row is where to look first.
+- A dominant OCR, embedding, or captioning stage points at the model serving that stage. Check endpoint latency, replica count, GPU utilization, and HTTP `429` throttling for that model. The `models` section of the trace lists the versions and endpoints that ran.
 - A few outlier pages in the slowest-pages table usually indicate unusual page content, such as very large images or dense tables, rather than a configuration problem.
-- An empty category table means the run recorded only operator spans, so confirm that you passed `--page-trace-detail full`.
 
-To drill into one slow page, run `retriever trace page traces/ --page N --document DOCUMENT_ID`. Sum `amortized_ms`, not `duration_ms`, when you aggregate spans yourself. Operators batch pages, so `duration_ms` repeats on every page that a batched span covered. For the detail levels, the trace file schema, and the full timing model, refer to [Page tracing](page-tracing.md). For resource sizing after you identify the bottleneck, refer to the [performance guide](performance_guide.md).
+To drill into one slow page, run `retriever trace page traces/ --page N --document DOCUMENT_ID`. Sum `amortized_ms`, not `duration_ms`, when you aggregate spans yourself. Operators batch pages, so `duration_ms` repeats on every page that a batched span covered. For the trace file schema and the full timing model, refer to [Page tracing](page-tracing.md). For resource sizing after you identify the bottleneck, refer to the [performance guide](performance_guide.md).
 
 
 

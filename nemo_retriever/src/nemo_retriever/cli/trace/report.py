@@ -9,6 +9,12 @@ Every number reported here is derived from ``amortized_ms`` rather than the raw
 measured duration on each page in that batch, so summing durations would
 multiply the batch cost by its page count. Amortized values divide that cost
 across the pages it covered and therefore stay additive.
+
+Dividing evenly also means a batched run gives every page in a batch the same
+time, so timings alone cannot pick out an expensive page. Each page reports
+whether its timing was measured or amortized, and the work counters operators
+recorded for it are ranked separately: those are counted per page regardless of
+batching, so they identify a costly page even when its timings are averages.
 """
 
 from __future__ import annotations
@@ -18,12 +24,6 @@ from typing import Any, Iterable, Sequence
 
 from rich.console import Console
 from rich.table import Table
-
-# Categories reported in the breakdown, in the order operators tend to spend
-# time in them. The "operator" category is excluded: operator spans are the
-# parents of these, so their total is the denominator, not a peer.
-_CATEGORY_ORDER = ("network", "gpu", "cpu", "io")
-
 
 def _fmt_ms(value: Any) -> str:
     try:
@@ -42,10 +42,6 @@ def _fmt_pct(value: Any) -> str:
         return "-"
 
 
-def _category_label(field: str) -> str:
-    return field[:-3] if field.endswith("_ms") else field
-
-
 def summarize(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """Build a cross-document rollup over *traces*.
 
@@ -55,8 +51,9 @@ def summarize(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
     operator_ms: dict[str, float] = defaultdict(float)
     operator_self_ms: dict[str, float] = defaultdict(float)
     operator_calls: dict[str, int] = defaultdict(int)
-    category_ms: dict[str, float] = defaultdict(float)
     model_ms: dict[str, float] = defaultdict(float)
+    work_totals: dict[str, float] = defaultdict(float)
+    timing_sources: dict[str, None] = {}
 
     documents: list[dict[str, Any]] = []
     pages: list[dict[str, Any]] = []
@@ -99,8 +96,6 @@ def summarize(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
             operator_ms[name] += float(entry.get("total_ms") or 0.0)
             operator_self_ms[name] += float(entry.get("self_ms") or 0.0)
             operator_calls[name] += int(entry.get("calls") or 0)
-        for field, value in (summary.get("by_category") or {}).items():
-            category_ms[_category_label(str(field))] += float(value or 0.0)
         for key, value in (summary.get("by_model") or {}).items():
             model_ms[str(key)] += float(value or 0.0)
 
@@ -114,9 +109,15 @@ def summarize(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
             )
             models.setdefault(identity, dict(descriptor))
 
+        for key, value in (summary.get("work_totals") or {}).items():
+            work_totals[str(key)] += float(value or 0.0)
+
         for page in trace.get("page_summaries") or []:
             by_operator = page.get("by_operator") or {}
             slowest = max(by_operator.items(), key=lambda item: item[1], default=(None, 0.0))
+            work = {str(key): float(value or 0.0) for key, value in (page.get("work") or {}).items()}
+            timing_source = str(page.get("timing_source") or "measured")
+            timing_sources.setdefault(timing_source, None)
             pages.append(
                 {
                     "document_id": document.get("document_id"),
@@ -127,6 +128,9 @@ def summarize(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
                     "span_count": int(page.get("span_count") or 0),
                     "slowest_operator": slowest[0],
                     "slowest_operator_ms": float(slowest[1] or 0.0),
+                    "max_page_fanout": int(page.get("max_page_fanout") or 1),
+                    "timing_source": timing_source,
+                    "work": work,
                 }
             )
 
@@ -142,25 +146,34 @@ def summarize(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
         }
         for name, total in sorted(operator_ms.items(), key=lambda item: -item[1])
     ]
-    # Shares are against the operator total, so a category reads as "this much
-    # of measured pipeline time went to network / GPU / CPU / I/O".
-    by_category = [
-        {
-            "category": name,
-            "total_ms": round(total, 3),
-            "pct_of_total": round(100.0 * total / grand_total_ms, 2) if grand_total_ms else 0.0,
-        }
-        for name, total in sorted(
-            ((name, value) for name, value in category_ms.items() if name != "operator"),
-            key=lambda item: (
-                _CATEGORY_ORDER.index(item[0]) if item[0] in _CATEGORY_ORDER else 99,
-                item[0],
+    # Work counters use incomparable units, so a page is ranked by how far it
+    # exceeds the average page in its own heaviest driver, never by a
+    # cross-metric sum. Scoring against each metric's average rather than its
+    # maximum matters: a counter that is uniform across pages then scores 1.0
+    # everywhere and stays out of the ranking, where scoring against the
+    # maximum would saturate every page and bury the genuinely skewed counter.
+    work_metrics = [key for key, _ in sorted(work_totals.items(), key=lambda item: -item[1])]
+    metric_means = {
+        metric: work_totals[metric] / len(pages) for metric in work_metrics if pages and work_totals[metric] > 0
+    }
+    for page in pages:
+        page["work_index"] = round(
+            max(
+                (page["work"].get(metric, 0.0) / mean for metric, mean in metric_means.items()),
+                default=0.0,
             ),
+            3,
         )
-    ]
 
     pages.sort(key=lambda page: -page["total_ms"])
     documents.sort(key=lambda document: -document["total_ms"])
+
+    if len(timing_sources) > 1:
+        timing_resolution = "mixed"
+    elif "amortized" in timing_sources:
+        timing_resolution = "amortized"
+    else:
+        timing_resolution = "measured"
 
     return {
         "schema_versions": list(schema_versions),
@@ -170,15 +183,18 @@ def summarize(traces: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "page_count": total_pages,
         "total_ms": round(grand_total_ms, 3),
         "ms_per_page": round(grand_total_ms / total_pages, 3) if total_pages else 0.0,
+        "timing_resolution": timing_resolution,
         "documents": documents,
         "by_operator": by_operator,
-        "by_category": by_category,
         "by_model": [
             {"model_key": key, "total_ms": round(value, 3)}
             for key, value in sorted(model_ms.items(), key=lambda item: -item[1])
         ],
         "models": list(models.values()),
         "slowest_pages": pages,
+        "work_metrics": work_metrics,
+        "work_totals": {key: round(work_totals[key], 3) for key in work_metrics},
+        "heaviest_pages": sorted(pages, key=lambda page: -page["work_index"]),
     }
 
 
@@ -216,23 +232,6 @@ def render_summary(console: Console, summary: dict[str, Any], *, top: int) -> No
     if not summary["by_operator"]:
         operator_table.add_row("(no operator spans)", "-", "-", "-", "-", "-")
     console.print(operator_table)
-
-    category_table = Table(
-        title="Time by category (share of traced time)", title_justify="left", header_style="bold"
-    )
-    category_table.add_column("Category")
-    category_table.add_column("Total", justify="right")
-    category_table.add_column("Share", justify="right")
-    for entry in summary["by_category"]:
-        category_table.add_row(str(entry["category"]), _fmt_ms(entry["total_ms"]), _fmt_pct(entry["pct_of_total"]))
-    if not summary["by_category"]:
-        category_table.add_row("(none recorded)", "-", "-")
-    console.print(category_table)
-    if not any(entry["total_ms"] for entry in summary["by_category"]):
-        console.print(
-            "[dim]Only operator-level spans were recorded. "
-            "Re-run with --page-trace-detail full for network, GPU, and I/O detail.[/dim]"
-        )
 
     if summary["models"]:
         model_table = Table(title="Models", title_justify="left", header_style="bold")
@@ -276,20 +275,90 @@ def render_summary(console: Console, summary: dict[str, Any], *, top: int) -> No
     page_table.add_column("Traced", justify="right")
     page_table.add_column("Wall", justify="right")
     page_table.add_column("Spans", justify="right")
+    page_table.add_column("Timing")
     page_table.add_column("Slowest operator")
     for page in summary["slowest_pages"][:top]:
         slowest = page["slowest_operator"]
+        timing = str(page.get("timing_source") or "measured")
         page_table.add_row(
             str(page["document_id"]),
             str(page["page_number"]),
             _fmt_ms(page["total_ms"]),
             _fmt_ms(page["wall_ms"]),
             str(page["span_count"]),
+            timing if timing == "measured" else f"[yellow]{timing}[/yellow]",
             f"{slowest} ({_fmt_ms(page['slowest_operator_ms'])})" if slowest else "-",
         )
     if not summary["slowest_pages"]:
-        page_table.add_row("(no pages traced)", "-", "-", "-", "-", "-")
+        page_table.add_row("(no pages traced)", "-", "-", "-", "-", "-", "-")
     console.print(page_table)
+
+    _render_work(console, summary, top=top)
+
+
+def _fmt_count(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if not number:
+        return "-"
+    return f"{number:,.0f}" if number == int(number) else f"{number:,.2f}"
+
+
+def _render_work(console: Console, summary: dict[str, Any], *, top: int) -> None:
+    """Print per-page work volume, the signal that survives batching."""
+    metrics: list[str] = summary.get("work_metrics") or []
+    resolution = str(summary.get("timing_resolution") or "measured")
+
+    if resolution != "measured":
+        console.print(
+            "\n[yellow]Per-page timings on this run are batch averages.[/yellow] An operator span "
+            "covered several pages, so its cost was divided evenly and every page in a batch reports "
+            "the same time. Rank pages by work volume below, or re-run with "
+            "[bold]run_mode='batch'[/bold] (one page per batch by default) for measured per-page times."
+        )
+
+    if not metrics:
+        if resolution != "measured":
+            console.print("No work counters were recorded, so no per-page cost driver is available.")
+        return
+
+    table = Table(
+        title=f"Heaviest pages by work volume (top {top})",
+        title_justify="left",
+        header_style="bold",
+        caption="Work index is a page's heaviest counter as a multiple of the per-page average; 1.0 is typical.",
+        caption_justify="left",
+    )
+    table.add_column("Document")
+    table.add_column("Page", justify="right")
+    table.add_column("Work index", justify="right")
+    shown = metrics[:4]
+    for metric in shown:
+        table.add_column(metric.rpartition(".")[2] or metric, justify="right")
+    for page in (summary.get("heaviest_pages") or [])[:top]:
+        table.add_row(
+            str(page["document_id"]),
+            str(page["page_number"]),
+            f"{float(page.get('work_index') or 0.0):.2f}",
+            *[_fmt_count(page["work"].get(metric)) for metric in shown],
+        )
+    console.print(table)
+
+    totals = Table(title="Work totals", title_justify="left", header_style="bold")
+    totals.add_column("Counter")
+    totals.add_column("Total", justify="right")
+    totals.add_column("Per page", justify="right")
+    page_count = int(summary.get("page_count") or 0)
+    for metric in metrics:
+        total = float((summary.get("work_totals") or {}).get(metric) or 0.0)
+        totals.add_row(
+            metric,
+            _fmt_count(total),
+            _fmt_count(total / page_count) if page_count else "-",
+        )
+    console.print(totals)
 
 
 def page_detail(trace: dict[str, Any], page_number: int) -> dict[str, Any]:
@@ -357,22 +426,25 @@ def render_page(console: Console, detail: dict[str, Any]) -> None:
     header.add_row("Traced time", _fmt_ms(page.get("total_ms")))
     header.add_row("Wall time", _fmt_ms(page.get("wall_ms")))
     header.add_row("Spans", str(page.get("span_count")))
+    timing_source = str(page.get("timing_source") or "measured")
+    if timing_source == "measured":
+        header.add_row("Timing", "measured on this page")
+    else:
+        fanout = int(page.get("max_page_fanout") or 1)
+        header.add_row("Timing", f"[yellow]amortized across {fanout} pages[/yellow]")
     console.print(header)
 
-    category_table = Table(title="Page time by category", title_justify="left", header_style="bold")
-    category_table.add_column("Category")
-    category_table.add_column("Total", justify="right")
-    for field, value in (page.get("by_category") or {}).items():
-        label = _category_label(str(field))
-        if value and label != "operator":
-            category_table.add_row(label, _fmt_ms(value))
-    if not category_table.rows:
-        category_table.add_row("(none recorded)", "-")
-    console.print(category_table)
+    work = page.get("work") or {}
+    if work:
+        work_table = Table(title="Work recorded for this page", title_justify="left", header_style="bold")
+        work_table.add_column("Counter")
+        work_table.add_column("Value", justify="right")
+        for key, value in work.items():
+            work_table.add_row(str(key), _fmt_count(value))
+        console.print(work_table)
 
     waterfall = Table(title="Span waterfall", title_justify="left", header_style="bold")
     waterfall.add_column("Span")
-    waterfall.add_column("Category")
     waterfall.add_column("Duration", justify="right")
     waterfall.add_column("Amortized", justify="right")
     waterfall.add_column("Batch", justify="right")
@@ -385,7 +457,6 @@ def render_page(console: Console, detail: dict[str, Any]) -> None:
             name = f"[red]{name}[/red]"
         waterfall.add_row(
             name,
-            str(span.get("category") or "-"),
             _fmt_ms(span.get("duration_ms")),
             _fmt_ms(span.get("amortized_ms")),
             str(span.get("batch_size") or "-"),

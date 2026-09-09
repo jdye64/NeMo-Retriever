@@ -64,10 +64,10 @@ def test_trace_options_default_to_unset(tmp_path: Path) -> None:
 
 
 def test_trace_options_reach_the_resolved_plan(tmp_path: Path) -> None:
-    plan = _plan(tmp_path, page_trace_dir=str(tmp_path / "traces"), page_trace_detail="full")
+    plan = _plan(tmp_path, page_trace_dir=str(tmp_path / "traces"), page_trace_detail="operator")
 
     assert plan.page_trace_dir == str(tmp_path / "traces")
-    assert plan.page_trace_detail == "full"
+    assert plan.page_trace_detail == "operator"
 
 
 def test_unknown_trace_detail_is_rejected_before_any_work(tmp_path: Path) -> None:
@@ -98,9 +98,9 @@ def test_execute_forwards_trace_detail_to_ingest(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(ingest_execution, "create_ingestor", lambda **_kwargs: fake)
     monkeypatch.setattr(ingest_execution, "_count_lancedb_rows", lambda *_a, **_k: 3)
 
-    ingest_execution.execute_ingest_plan(_plan(tmp_path, page_trace_detail="full"))
+    ingest_execution.execute_ingest_plan(_plan(tmp_path, page_trace_detail="operator"))
 
-    assert fake.ingest.call_args.kwargs == {"page_trace_detail": "full"}
+    assert fake.ingest.call_args.kwargs == {"page_trace_detail": "operator"}
 
 
 def test_execute_omits_trace_detail_when_unset(monkeypatch, tmp_path: Path) -> None:
@@ -154,13 +154,13 @@ def test_graph_command_forwards_the_trace_flags(monkeypatch, tmp_path: Path) -> 
             "--page-trace-dir",
             str(tmp_path / "traces"),
             "--page-trace-detail",
-            "full",
+            "operator",
         ],
     )
 
     assert captured["trace"] == ingest_plan.IngestTraceOptions(
         page_trace_dir=str(tmp_path / "traces"),
-        page_trace_detail="full",
+        page_trace_detail="operator",
     )
 
 
@@ -179,12 +179,12 @@ def test_service_request_resolution_carries_trace_options(tmp_path: Path) -> Non
         _service_plan_request(
             tmp_path,
             page_trace_dir=str(tmp_path / "traces"),
-            page_trace_detail="full",
+            page_trace_detail="operator",
         )
     )
 
     assert request.trace.page_trace_dir == str(tmp_path / "traces")
-    assert request.trace.page_trace_detail == "full"
+    assert request.trace.page_trace_detail == "operator"
 
 
 def test_service_request_rejects_unknown_trace_detail(tmp_path: Path) -> None:

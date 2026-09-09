@@ -44,9 +44,9 @@ def _page_trace(*, pages: int = 3, endpoint_padding: int = 4000) -> dict[str, An
         },
         "pipeline": {"operators": ["PDFExtractionActor"], "params": {}},
         "models": [{"model_key": "ocr", "name": "nvidia/nemoretriever-ocr-v1", "version": "v2"}],
-        "document_summary": {"total_ms": 900.0, "by_operator": [], "by_category": {}, "by_model": {}},
+        "document_summary": {"total_ms": 900.0, "by_operator": [], "by_model": {}},
         "page_summaries": [
-            {"page_number": page, "total_ms": 300.0, "by_operator": {}, "by_category": {}}
+            {"page_number": page, "total_ms": 300.0, "by_operator": {}}
             for page in range(1, pages + 1)
         ],
         "spans": [
@@ -54,7 +54,7 @@ def _page_trace(*, pages: int = 3, endpoint_padding: int = 4000) -> dict[str, An
                 "span_id": f"s{page}",
                 "page_number": page,
                 "name": "nim.infer",
-                "category": "network",
+                "kind": "child",
                 "duration_ms": 300.0,
                 "amortized_ms": 300.0,
                 # Long enough that row sanitization would truncate it.
@@ -207,7 +207,7 @@ def test_pipeline_spec_defaults_to_no_tracing_and_stays_empty() -> None:
 
 def test_requesting_a_trace_makes_the_spec_non_empty() -> None:
     assert not PipelineSpec(page_trace_detail="operator").is_empty()
-    assert not PipelineSpec(page_trace_detail="full").is_empty()
+    assert not PipelineSpec(page_trace_detail="operator").is_empty()
 
 
 def test_pipeline_spec_rejects_an_unknown_detail_level() -> None:
@@ -222,7 +222,7 @@ def test_trace_detail_is_a_benign_override_under_policy() -> None:
     # Tracing is a diagnostic knob, so a spec carrying only page_trace_detail
     # must be accepted even where per-request overrides are rejected outright.
     reject_all = PipelineOverridesConfig(mode="reject")
-    spec = PipelineSpec(page_trace_detail="full")
+    spec = PipelineSpec(page_trace_detail="operator")
 
     assert validate_pipeline_spec(spec, reject_all) == spec
 
@@ -299,14 +299,14 @@ def test_service_client_sends_the_requested_detail_on_the_spec() -> None:
     from nemo_retriever.service.service_ingestor import ServiceIngestor
 
     ingestor = ServiceIngestor(base_url="http://localhost:7670")
-    assert ingestor._apply_page_trace_flags(None, {"page_trace_detail": "full"}) is False
-    assert ingestor._page_trace_detail_active == "full"
+    assert ingestor._apply_page_trace_flags(None, {"page_trace_detail": "operator"}) is False
+    assert ingestor._page_trace_detail_active == "operator"
 
     payload = ingestor._pipeline_payload(
         result_schema="legacy", return_embeddings=False, return_images=False
     )
     assert payload is not None
-    assert payload["page_trace_detail"] == "full"
+    assert payload["page_trace_detail"] == "operator"
 
 
 def test_service_client_does_not_request_traces_it_will_not_read() -> None:
@@ -382,8 +382,8 @@ def test_execute_params_accept_the_page_trace_fields() -> None:
     assert default.page_trace_detail is None
     assert default.return_page_traces is False
 
-    explicit = IngestExecuteParams(page_trace_detail="full", return_page_traces=True)
-    assert explicit.page_trace_detail == "full"
+    explicit = IngestExecuteParams(page_trace_detail="operator", return_page_traces=True)
+    assert explicit.page_trace_detail == "operator"
     assert explicit.return_page_traces is True
 
     with pytest.raises(Exception):

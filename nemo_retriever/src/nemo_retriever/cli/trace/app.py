@@ -104,8 +104,8 @@ def _emit_json(payload: Any) -> None:
     "summary",
     cls=DefaultSummaryTraceCommand,
     help=(
-        "Report where pipeline time went across one or more traces: totals by operator "
-        "and category, model versions, and the slowest pages."
+        "Report where pipeline time went across one or more traces: totals by "
+        "operator, model versions, and the slowest pages."
     ),
 )
 def summary_command(

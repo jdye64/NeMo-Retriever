@@ -35,7 +35,7 @@ def _span(source_id: str, name: str, duration_ms: float, *, start_offset_ms: flo
         "page_number": int(source_id.rsplit("_", 1)[1]),
         "source_id": source_id,
         "name": name,
-        "category": "operator",
+        "kind": "operator",
         "operator": name,
         "model_key": None,
         "start_ms": start_ms,
@@ -202,17 +202,17 @@ def test_a_configured_output_directory_also_overrides_off(monkeypatch, tmp_path:
 
 def test_execute_params_carry_the_trace_options() -> None:
     ingestor = _ingestor()
-    params = IngestExecuteParams(page_trace_detail="full", return_page_traces=True)
+    params = IngestExecuteParams(page_trace_detail="operator", return_page_traces=True)
 
     ingestor._resolve_page_trace_options(params, {})
 
-    assert ingestor._page_trace_detail == "full"
+    assert ingestor._page_trace_detail == "operator"
     assert ingestor._return_page_traces is True
 
 
 def test_kwargs_win_over_execute_params() -> None:
     ingestor = _ingestor()
-    params = IngestExecuteParams(page_trace_detail="full")
+    params = IngestExecuteParams(page_trace_detail="operator")
 
     ingestor._resolve_page_trace_options(params, {"page_trace_detail": "operator"})
 

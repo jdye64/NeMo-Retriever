@@ -19,7 +19,6 @@ from numpy import dtype
 from numpy import ndarray
 
 from nemo_retriever.common.api.internal.primitives.tracing.tagging import traceable_func
-from nemo_retriever.common.tracing.spans import accumulate as accumulate_trace
 from nemo_retriever.common.api.util.image_processing.clustering import (
     group_bounding_boxes,
     combine_groups_into_bboxes,
@@ -237,9 +236,8 @@ def pdfium_pages_to_numpy(
         if scale_tuple:
             render_scale = min(base_scale, _compute_render_scale_to_fit(page, scale_tuple, rotation))
 
-        with accumulate_trace("pdfium.pages_to_numpy", category="cpu"):
-            page_bitmap = page.render(scale=render_scale, rotation=rotation)
-            img_arr = convert_bitmap_to_corrected_numpy(page_bitmap)
+        page_bitmap = page.render(scale=render_scale, rotation=rotation)
+        img_arr = convert_bitmap_to_corrected_numpy(page_bitmap)
 
         # Safety fallback for rounding edge cases - only scale down if needed
         if scale_tuple and (img_arr.shape[1] > scale_tuple[0] or img_arr.shape[0] > scale_tuple[1]):

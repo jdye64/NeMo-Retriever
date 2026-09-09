@@ -17,21 +17,12 @@ from dataclasses import dataclass, field
 import secrets
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Final, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Final, Iterator
 
-from nemo_retriever.common.tracing.runtime import (
-    full_detail_enabled,
-    record_model,
-    worker_label,
-)
+from nemo_retriever.common.tracing.runtime import record_model, worker_label
 
 if TYPE_CHECKING:
     from nemo_retriever.common.tracing.collector import BatchTraceCollector
-
-SpanCategory = Literal["operator", "network", "gpu", "cpu", "io"]
-
-#: Categories rolled up in ``by_category`` summaries.
-SPAN_CATEGORIES: Final[tuple[str, ...]] = ("operator", "network", "gpu", "cpu", "io")
 
 _ID_PREFIX: Final = secrets.token_hex(3)
 _id_lock = threading.Lock()
@@ -65,7 +56,10 @@ class Span:
 
     span_id: str
     name: str
-    category: str = "cpu"
+    # Distinguishes the operator's own batch span from any span opened inside
+    # it. Child spans inherit the operator name, so rollups need this to avoid
+    # counting a child's time twice against its operator.
+    kind: str = "child"
     parent_span_id: str | None = None
     operator: str | None = None
     model_key: str | None = None
@@ -84,7 +78,7 @@ class Span:
         payload: dict[str, Any] = {
             "span_id": self.span_id,
             "name": self.name,
-            "category": self.category,
+            "kind": self.kind,
             "start_ms": round(self.start_ms, 3),
             "end_ms": round(self.end_ms, 3),
             "duration_ms": round(self.duration_ms, 3),
@@ -229,15 +223,53 @@ def page_scope(source_id: str | None) -> Iterator[None]:
         _local.page = previous
 
 
+def record_page_work(source_id: str | None = None, /, **counts: Any) -> None:
+    """Record how much work one page contributed to the enclosing operator.
+
+    The heavy stages batch their inference across pages, so a single duration
+    covers the whole batch and no timing can say which page was expensive.
+    Work counts can. A page contributing 34 OCR crops costs far more than one
+    contributing 2 regardless of how the batch was cut, so these counters stay
+    meaningful in every run mode and batch size — unlike an amortized duration,
+    which is identical for every page in a batch by construction.
+
+    Counters are namespaced by the recording operator and summed per page.
+    Non-numeric and ``None`` values are ignored.
+
+    Parameters
+    ----------
+    source_id
+        Page to charge the work to. Defaults to the enclosing
+        :func:`page_scope`, so a loop that already scopes each page can omit it.
+    **counts
+        Named work counters, for example ``crops=34`` or ``text_chars=1840``.
+    """
+    collector = _current_collector()
+    if collector is None or not counts:
+        return
+    resolved_source_id = source_id or current_page_scope()
+    if not resolved_source_id:
+        return
+
+    numeric: dict[str, float] = {}
+    for key, value in counts.items():
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            numeric[key] = float(value)
+        except (TypeError, ValueError):
+            continue
+    if numeric:
+        collector.add_work(str(resolved_source_id), numeric)
+
+
 @contextmanager
 def span(
     name: str,
     *,
-    category: str = "cpu",
     model_key: str | None = None,
     batch_size: int | None = None,
     attrs: dict[str, Any] | None = None,
-    detail: str = "operator",
     parent_span_id: str | None = None,
     source_id: str | None = None,
 ) -> Iterator[Any]:
@@ -246,22 +278,17 @@ def span(
     Spans measure entry and exit wall time around the call and nothing more.
     They deliberately do not synchronize CUDA or drive a profiler, so tracing
     stays cheap enough to leave on and never changes how the pipeline runs.
-    Reach for Nsight Systems when you need true device-level attribution.
+    Reach for Nsight Systems when you need device-level attribution.
 
     Parameters
     ----------
     name
-        Span label, for example ``"nim.infer"`` or an operator class name.
-    category
-        One of :data:`SPAN_CATEGORIES`; drives the ``by_category`` rollups.
+        Span label, normally the operator class name.
     model_key
         Key of the model this operation used, linking the span to a registered
         model version.
     batch_size
         Number of pages or items the operation covered.
-    detail
-        Minimum detail level at which this span is recorded. Curated hot-spot
-        spans pass ``"full"``; operator spans use the default.
     parent_span_id
         Explicit parent, for work handed to a worker thread. Parent chains are
         thread-local, so a span opened in a pool thread would otherwise be
@@ -273,7 +300,7 @@ def span(
         have the page's ``source_id`` in hand while looping over a batch.
     """
     collector = _current_collector()
-    if collector is None or (detail == "full" and not full_detail_enabled()):
+    if collector is None:
         yield NULL_SPAN
         return
 
@@ -288,7 +315,6 @@ def span(
     record = Span(
         span_id=new_span_id(),
         name=name,
-        category=category,
         parent_span_id=parent_span_id or (stack[-1] if stack else None),
         operator=collector.operator_name,
         model_key=model_key,
@@ -315,92 +341,3 @@ def span(
         record.end_ms = record.start_ms + duration_ms
         stack.pop()
         collector.add(record)
-
-
-@contextmanager
-def accumulate(
-    name: str,
-    *,
-    category: str = "cpu",
-    source_id: str | None = None,
-    detail: str = "full",
-) -> Iterator[Any]:
-    """Fold repeated calls to a hot helper into a single rolled-up span.
-
-    Use this instead of :func:`span` for work invoked many times per page, such
-    as per-crop image encoding. The resulting span reports the summed duration
-    and a ``calls`` attribute rather than one record per invocation, which
-    keeps trace artifacts small enough to stay useful.
-    """
-    collector = _current_collector()
-    if collector is None or (detail == "full" and not full_detail_enabled()):
-        yield NULL_SPAN
-        return
-
-    resolved_source_id = source_id or current_page_scope()
-    stack = _stack()
-    parent = stack[-1] if stack else None
-    key = (name, resolved_source_id, parent)
-
-    def _factory() -> Span:
-        return Span(
-            span_id=new_span_id(),
-            name=name,
-            category=category,
-            parent_span_id=parent,
-            operator=collector.operator_name,
-            source_id=resolved_source_id,
-            batch_size=1 if resolved_source_id else collector.batch_size,
-            worker=worker_label(),
-            attrs={"calls": 0, "rolled_up": True},
-        )
-
-    record = collector.accumulated_span(key, _factory)
-    start_wall = time.time()
-    start = time.perf_counter()
-    try:
-        yield SpanHandle(record)
-    except BaseException as exc:
-        record.status = "error"
-        record.error = f"{type(exc).__name__}: {exc}"[:400]
-        raise
-    finally:
-        duration_ms = (time.perf_counter() - start) * 1000.0
-        if not record.start_ms:
-            record.start_ms = start_wall * 1000.0
-        record.duration_ms += duration_ms
-        record.end_ms = max(record.end_ms, start_wall * 1000.0 + duration_ms)
-        record.attrs["calls"] = int(record.attrs.get("calls", 0)) + 1
-
-
-@contextmanager
-def model_span(
-    model_key: str,
-    *,
-    name: str | None = None,
-    version: str | None = None,
-    backend: str | None = None,
-    endpoint: str | None = None,
-    category: str = "network",
-    span_name: str | None = None,
-    batch_size: int | None = None,
-    attrs: dict[str, Any] | None = None,
-    detail: str = "full",
-    parent_span_id: str | None = None,
-) -> Iterator[Any]:
-    """Record a model invocation span and register the model's identity.
-
-    Model registration happens even when the span itself is filtered out by the
-    detail level, so traces always report which model version ran.
-    """
-    record_model(model_key, name=name, version=version, backend=backend, endpoint=endpoint)
-    with span(
-        span_name or f"model.{model_key}",
-        category=category,
-        model_key=model_key,
-        batch_size=batch_size,
-        attrs=attrs,
-        detail=detail,
-        parent_span_id=parent_span_id,
-    ) as handle:
-        yield handle

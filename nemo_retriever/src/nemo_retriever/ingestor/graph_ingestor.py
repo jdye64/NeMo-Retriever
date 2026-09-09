@@ -787,8 +787,8 @@ class GraphIngestor(ingestor):
             still be returned; the default raise path remains scoped to
             explicitly configured remote stages.
         page_trace_detail
-            ``"off"``, ``"operator"`` (default), or ``"full"``. Controls how
-            much per-page execution detail is recorded. See
+            ``"operator"`` (default) times each pipeline stage per page;
+            ``"off"`` disables tracing. See
             :meth:`~nemo_retriever.ingestor.core.ingestor.save_page_traces`.
         return_page_traces
             When ``True``, append the aggregated per-document page traces to

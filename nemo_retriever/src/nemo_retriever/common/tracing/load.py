@@ -9,6 +9,11 @@ The ``spans`` array in a trace document is deliberately flat, so
 ``amortized_ms`` rather than ``duration_ms``: a batched operator span reports
 its exact measured duration on every page it covered, while the amortized
 value divides that duration across those pages and therefore stays additive.
+
+:func:`page_summaries_dataframe` flattens per-page rollups, prefixing stage
+timings with ``operator.`` and work counters with ``work.``. Rank pages by a
+``work.`` column to find expensive pages in a run whose batches were too large
+for per-page timings to differ; ``timing_source`` says which case a page is in.
 """
 
 from __future__ import annotations
@@ -112,7 +117,7 @@ def spans_dataframe(traces: Sequence[dict[str, Any]]) -> pd.DataFrame:
                 "page_number",
                 "span_id",
                 "name",
-                "category",
+                "kind",
                 "operator",
                 "duration_ms",
                 "amortized_ms",
@@ -135,11 +140,13 @@ def page_summaries_dataframe(traces: Sequence[dict[str, Any]]) -> pd.DataFrame:
                 "total_ms": summary.get("total_ms"),
                 "wall_ms": summary.get("wall_ms"),
                 "span_count": summary.get("span_count"),
+                "max_page_fanout": summary.get("max_page_fanout"),
+                "timing_source": summary.get("timing_source"),
             }
-            for key, value in (summary.get("by_category") or {}).items():
-                record[f"category.{key}"] = value
             for key, value in (summary.get("by_operator") or {}).items():
                 record[f"operator.{key}"] = value
+            for key, value in (summary.get("work") or {}).items():
+                record[f"work.{key}"] = value
             records.append(record)
     if not records:
         return pd.DataFrame(columns=["document_id", "page_number", "total_ms", "wall_ms"])

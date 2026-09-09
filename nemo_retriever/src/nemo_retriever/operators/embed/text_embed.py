@@ -20,6 +20,7 @@ import time
 import traceback
 
 import pandas as pd
+from nemo_retriever.common.tracing import record_page_work
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 from nemo_retriever.graph.designer import designer_component
 from nemo_retriever.operators.gpu_operator import GPUOperator
@@ -106,6 +107,9 @@ def embed_text_1b_v2(
                 # Keep placeholder but mark as "no text".
                 payloads[i] = {"embedding": None, "error": None}
                 continue
+            # Embedding runs on chunks spanning many pages, so its duration
+            # cannot single out a page. Text volume can.
+            record_page_work(row.get("source_id"), text_chars=len(txt))
             # VL model handles formatting internally; skip prefix.
             if input_type and not hasattr(model, "embed_queries"):
                 texts.append(f"{input_type}: {txt}")

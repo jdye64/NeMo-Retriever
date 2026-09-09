@@ -16,6 +16,14 @@ emitted record reports both the exact measured ``duration_ms`` and an
 pages the span applies to. Amortized values are the ones safe to sum: summing
 them across pages reproduces the exact measured duration, so page rollups and
 document totals reconcile.
+
+Amortizing divides evenly, so every page in a batch receives the same value and
+per-page timings only discriminate when a span covered one page. Each page
+summary reports ``max_page_fanout`` and a ``timing_source`` of ``measured`` or
+``amortized`` so readers can tell the two apart, and carries the ``work``
+counters operators recorded for it. Work counts are measured per page whatever
+the batch size, which is what makes an expensive page identifiable in a run
+whose timings are batch averages.
 """
 
 from __future__ import annotations
@@ -33,13 +41,12 @@ import uuid
 
 import pandas as pd
 
-from nemo_retriever.common.tracing.collector import decode_payload
+from nemo_retriever.common.tracing.collector import decode_payload_full
 from nemo_retriever.common.tracing.runtime import (
     TRACE_COLUMN,
     TRACE_SCHEMA_VERSION,
     model_identity,
 )
-from nemo_retriever.common.tracing.spans import SPAN_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +90,18 @@ def _page_number_from_source_id(source_id: str | None) -> int | None:
 
 
 class _DocumentAccumulator:
-    """Collects deduped spans and page identities for one source document."""
+    """Collects deduped spans, work counts, and page identities for one document."""
 
-    __slots__ = ("source_path", "spans", "span_pages", "pages", "models", "model_keys")
+    __slots__ = (
+        "source_path",
+        "spans",
+        "span_pages",
+        "pages",
+        "models",
+        "model_keys",
+        "page_work",
+        "work_keys",
+    )
 
     def __init__(self, source_path: str) -> None:
         self.source_path = source_path
@@ -94,6 +110,8 @@ class _DocumentAccumulator:
         self.pages: dict[int, str] = {}
         self.models: list[dict[str, Any]] = []
         self.model_keys: set[tuple[Any, ...]] = set()
+        self.page_work: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        self.work_keys: set[tuple[Any, Any]] = set()
 
     def add_row(self, spans: Iterable[dict[str, Any]], source_id: str | None, page_number: int | None) -> None:
         if page_number is not None and source_id:
@@ -105,6 +123,29 @@ class _DocumentAccumulator:
             self.spans.setdefault(span_id, span)
             if page_number is not None:
                 self.span_pages[span_id].add(page_number)
+
+    def add_work(self, work: Iterable[dict[str, Any]], page_number: int | None) -> None:
+        """Fold per-page work counters in, deduped across fanned-out rows."""
+        for record in work:
+            metrics = record.get("metrics")
+            if not isinstance(metrics, dict) or not metrics:
+                continue
+            identity = (record.get("span_id"), record.get("source_id"))
+            if identity in self.work_keys:
+                continue
+            # The record names the page it was measured on, which survives
+            # fan-out and row rebuilds more reliably than the carrying row.
+            resolved_page = _page_number_from_source_id(record.get("source_id")) or page_number
+            if resolved_page is None:
+                continue
+            self.work_keys.add(identity)
+            operator = str(record.get("operator") or "unknown")
+            bucket = self.page_work[resolved_page]
+            for key, value in metrics.items():
+                try:
+                    bucket[f"{operator}.{key}"] += float(value)
+                except (TypeError, ValueError):
+                    continue
 
     def add_models(self, models: Iterable[dict[str, Any]]) -> None:
         for descriptor in models:
@@ -123,10 +164,6 @@ def _child_duration_totals(spans: dict[str, dict[str, Any]]) -> dict[str, float]
         if parent:
             totals[parent] += float(span.get("duration_ms") or 0.0)
     return totals
-
-
-def _empty_category_totals() -> dict[str, float]:
-    return {f"{category}_ms": 0.0 for category in SPAN_CATEGORIES}
 
 
 def _round_mapping(mapping: dict[str, float], digits: int = 3) -> dict[str, float]:
@@ -151,14 +188,12 @@ def _build_document_trace(
     all_pages = sorted(accumulator.pages)
     span_records: list[dict[str, Any]] = []
     page_operator_ms: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    page_category_ms: dict[int, dict[str, float]] = defaultdict(_empty_category_totals)
     page_bounds: dict[int, list[float]] = {}
     page_span_counts: dict[int, int] = defaultdict(int)
 
     document_operator_ms: dict[str, float] = defaultdict(float)
     document_operator_self_ms: dict[str, float] = defaultdict(float)
     document_operator_calls: dict[str, int] = defaultdict(int)
-    document_category_ms = _empty_category_totals()
     document_model_ms: dict[str, float] = defaultdict(float)
 
     start_bounds: list[float] = []
@@ -178,7 +213,6 @@ def _build_document_trace(
         self_ms = max(0.0, duration_ms - child_totals.get(span_id, 0.0))
         amortized_ms = duration_ms / fanout
         amortized_self_ms = self_ms / fanout
-        category = str(span.get("category") or "cpu")
         operator = span.get("operator") or span.get("name") or "unknown"
         status = str(span.get("status") or "ok")
         if status != "ok":
@@ -196,20 +230,19 @@ def _build_document_trace(
         # charging each document the whole batch duration would inflate every
         # one of them. Amortizing keeps document totals equal to the sum of
         # their page summaries.
-        if category == "operator":
+        is_operator_span = span.get("kind") == "operator"
+        if is_operator_span:
             document_operator_calls[operator] += 1
-        category_field = f"{category}_ms"
         model_key = span.get("model_key")
 
         for page_number in pages:
             page_span_counts[page_number] += 1
-            if category == "operator":
+            # Only the operator's own span counts toward stage totals; a
+            # child span's time is already inside its parent's duration.
+            if is_operator_span:
                 page_operator_ms[page_number][operator] += amortized_ms
                 document_operator_ms[operator] += amortized_ms
                 document_operator_self_ms[operator] += amortized_self_ms
-            if category_field in page_category_ms[page_number]:
-                page_category_ms[page_number][category_field] += amortized_ms
-                document_category_ms[category_field] += amortized_ms
             if model_key:
                 document_model_ms[str(model_key)] += amortized_ms
             if start_ms and end_ms:
@@ -228,7 +261,7 @@ def _build_document_trace(
                 "span_id": span_id,
                 "parent_span_id": span.get("parent_span_id"),
                 "name": span.get("name"),
-                "category": category,
+                "kind": span.get("kind") or "child",
                 "operator": operator,
                 "model_key": model_key,
                 "start_ms": span.get("start_ms"),
@@ -248,10 +281,25 @@ def _build_document_trace(
 
     span_records.sort(key=lambda item: (item["page_number"], item["start_ms"] or 0.0))
 
+    # A page's timings are only as sharp as the batches it travelled in: a span
+    # covering many pages reports the same amortized value for each of them.
+    # Recording the widest fanout lets readers tell a measured page time from a
+    # batch average without re-deriving it from the span list.
+    page_max_fanout: dict[int, int] = defaultdict(lambda: 1)
+    for record in span_records:
+        if record["kind"] == "operator":
+            page = record["page_number"]
+            page_max_fanout[page] = max(page_max_fanout[page], int(record["page_fanout"]))
+
     page_summaries = []
+    document_work: dict[str, float] = defaultdict(float)
     for page_number in all_pages:
         operator_ms = dict(page_operator_ms.get(page_number, {}))
         bounds = page_bounds.get(page_number)
+        work = {key: value for key, value in accumulator.page_work.get(page_number, {}).items() if value}
+        for key, value in work.items():
+            document_work[key] += value
+        max_fanout = page_max_fanout.get(page_number, 1)
         page_summaries.append(
             {
                 "page_number": page_number,
@@ -259,8 +307,10 @@ def _build_document_trace(
                 "total_ms": round(sum(operator_ms.values()), 3),
                 "wall_ms": round(bounds[1] - bounds[0], 3) if bounds else 0.0,
                 "span_count": page_span_counts.get(page_number, 0),
+                "max_page_fanout": max_fanout,
+                "timing_source": "measured" if max_fanout == 1 else "amortized",
                 "by_operator": _round_mapping(operator_ms),
-                "by_category": _round_mapping(dict(page_category_ms.get(page_number, _empty_category_totals()))),
+                "work": _round_mapping(work),
             }
         )
 
@@ -300,8 +350,8 @@ def _build_document_trace(
             "wall_ms": wall_ms,
             "span_count": len(spans),
             "by_operator": by_operator,
-            "by_category": _round_mapping(document_category_ms),
             "by_model": _round_mapping(dict(document_model_ms)),
+            "work_totals": _round_mapping(dict(document_work)),
         },
         "page_summaries": page_summaries,
         "spans": span_records,
@@ -350,8 +400,8 @@ def aggregate_document_traces(
     page_numbers = frame["page_number"].tolist() if "page_number" in frame.columns else [None] * len(raw_traces)
 
     for raw, path, source_id, page_number in zip(raw_traces, paths, source_ids, page_numbers):
-        spans, models = decode_payload(raw)
-        if not spans and not models:
+        spans, models, work = decode_payload_full(raw)
+        if not spans and not models and not work:
             continue
 
         source_id_text = None if source_id is None else str(source_id)
@@ -379,6 +429,7 @@ def aggregate_document_traces(
             accumulator = _DocumentAccumulator(path_text)
             accumulators[path_text] = accumulator
         accumulator.add_row(spans, source_id_text, resolved_page)
+        accumulator.add_work(work, resolved_page)
         accumulator.add_models(models)
 
     if not accumulators:

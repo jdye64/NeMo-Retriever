@@ -98,12 +98,11 @@ class PipelineSpec(RichModel):
         default=False,
         description="Include raw image payload values in legacy transport rows.",
     )
-    page_trace_detail: Literal["off", "operator", "full"] = Field(
+    page_trace_detail: Literal["off", "operator"] = Field(
         default="off",
         description=(
             "Per-page execution trace detail recorded by the worker. "
-            "'operator' times each pipeline stage; 'full' adds network, GPU, and "
-            "heavy dependency spans inside stages; 'off' disables tracing. "
+            "'operator' times each pipeline stage per page; 'off' disables tracing. "
             "Defaults to 'off' because a service trace travels back on every "
             "status response, so clients opt in rather than pay for one they "
             "will not read. The local run modes trace at 'operator' by default."

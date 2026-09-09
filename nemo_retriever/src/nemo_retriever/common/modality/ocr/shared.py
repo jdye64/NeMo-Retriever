@@ -26,6 +26,7 @@ _logger = logging.getLogger(__name__)
 import numpy as np
 import pandas as pd
 from nemo_retriever.common.params import RemoteRetryParams
+from nemo_retriever.common.tracing import record_page_work
 from nemo_retriever.models.nim.nim import NIMClient, invoke_image_inference_batches
 from nemo_retriever.common.modality.table_and_chart import join_table_structure_and_ocr_output
 
@@ -822,6 +823,9 @@ def _run_remote_ocr(
             )
             crop_b64s: List[str] = [crop_b64 for _label, _bbox, crop_b64 in crops]
             crop_metadata: List[Tuple[str, List[float]]] = [(label_name, bbox) for label_name, bbox, _crop_b64 in crops]
+            # OCR cost tracks the number of crops a page yields far more
+            # closely than it tracks the page itself.
+            record_page_work(getattr(prepared.row, "source_id", None), crops=len(crop_b64s))
             if not crop_b64s:
                 continue
 
@@ -874,6 +878,9 @@ def _collect_local_crop_jobs(
                 prepared.detections,
                 prepared.wanted_labels,
             )
+            # Local OCR batches crops across pages, so the batch duration says
+            # nothing about which page drove it. The crop count does.
+            record_page_work(getattr(prepared.row, "source_id", None), crops=len(crops))
             for label_name, bbox, crop_array in crops:
                 merge_level = "word" if label_name == "table" else "paragraph"
                 jobs_by_merge_level[merge_level].append(
@@ -1241,6 +1248,7 @@ def nemotron_parse_page_elements(
                 crop_b64s: List[str] = [b64 for _label, _bbox, b64 in crops]
                 crop_meta: List[Tuple[str, List[float]]] = [(label, bbox) for label, bbox, _b64 in crops]
 
+                record_page_work(getattr(row, "source_id", None), parse_crops=len(crop_b64s))
                 if crop_b64s:
                     _invoke_kw = dict(
                         invoke_url=invoke_url,

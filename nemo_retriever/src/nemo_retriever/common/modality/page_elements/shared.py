@@ -14,6 +14,7 @@ import traceback
 import pandas as pd
 from nemo_retriever.models.nim.nim import NIMClient, invoke_page_elements_batches
 from nemo_retriever.common.params import RemoteRetryParams
+from nemo_retriever.common.tracing import record_page_work
 from nemo_retriever.common.modality.page_elements.local import (
     YOLOX_PAGE_V3_CLASS_LABELS,
     YOLOX_PAGE_V3_FINAL_SCORE,
@@ -727,10 +728,15 @@ def detect_page_elements_v3(
 
     out = pages_df.copy()
     out[output_column] = row_payloads
-    out[num_detections_column] = [
-        int(len(p.get("detections") or [])) if isinstance(p, dict) else 0 for p in row_payloads
-    ]
+    detection_counts = [int(len(p.get("detections") or [])) if isinstance(p, dict) else 0 for p in row_payloads]
+    out[num_detections_column] = detection_counts
     out[counts_by_label_column] = [
         _counts_by_label(p.get("detections") or []) if isinstance(p, dict) else {} for p in row_payloads
     ]
+    # Detection inference is batched across pages, so record what each page
+    # contributed instead. The count also drives how much cropping, table, and
+    # OCR work the page causes in later stages.
+    if "source_id" in pages_df.columns:
+        for source_id, count in zip(pages_df["source_id"].tolist(), detection_counts):
+            record_page_work(source_id, detections=count)
     return out

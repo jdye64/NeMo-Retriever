@@ -6,9 +6,16 @@
 
 Every operator invocation is timed and recorded against the pages it touched,
 producing one document-level JSON artifact per source document that retains
-full per-page detail. Operator-level timing is always on; curated hot-spot
-spans around network calls, model invocations, and heavy dependency work are
-recorded at ``full`` detail.
+per-page detail.
+
+How sharp that per-page detail is depends on how the run batched its work. One
+operator span covers a whole batch, and its cost is divided evenly across those
+pages, so per-page timings only distinguish pages when a span covered a single
+page. ``run_mode='batch'`` does that by default, while ``inprocess`` and
+``service`` hand each operator the whole document at once. Alongside timings,
+operators record per-page ``work`` counters (crops, detections, characters) via
+:func:`record_page_work`; those are measured per page in every run mode, so an
+expensive page stays identifiable even when its timings are batch averages.
 
 This package is independent of the legacy control-message tracing under
 ``common/api/internal/primitives/tracing``, which the current operator graph
@@ -16,11 +23,10 @@ does not use.
 
 Typical use from Python::
 
-    from nemo_retriever.common.tracing import load_traces, spans_dataframe
+    from nemo_retriever.common.tracing import load_traces, page_summaries_dataframe
 
-    traces = load_traces("traces/")
-    spans = spans_dataframe(traces)
-    spans.groupby("operator").amortized_ms.sum().sort_values(ascending=False)
+    pages = page_summaries_dataframe(load_traces("traces/"))
+    pages.nlargest(10, "work.OCRActor.crops")
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ from nemo_retriever.common.tracing.aggregate import (
 from nemo_retriever.common.tracing.collector import (
     BatchTraceCollector,
     decode_payload,
+    decode_payload_full,
     encode_payload,
     operator_trace,
 )
@@ -54,7 +61,6 @@ from nemo_retriever.common.tracing.runtime import (
     TRACE_SCHEMA_VERSION,
     VALID_TRACE_DETAILS,
     TraceDetail,
-    full_detail_enabled,
     get_detail,
     normalize_detail,
     record_model,
@@ -64,18 +70,15 @@ from nemo_retriever.common.tracing.runtime import (
     tracing_enabled,
 )
 from nemo_retriever.common.tracing.spans import (
-    SPAN_CATEGORIES,
     Span,
-    accumulate,
-    model_span,
     page_scope,
+    record_page_work,
     span,
 )
 
 __all__ = [
     "BatchTraceCollector",
     "DEFAULT_TRACE_DETAIL",
-    "SPAN_CATEGORIES",
     "Span",
     "TRACE_COLUMN",
     "TRACE_DETAIL_ENV_VAR",
@@ -83,22 +86,21 @@ __all__ = [
     "TraceDetail",
     "TraceFileError",
     "VALID_TRACE_DETAILS",
-    "accumulate",
     "aggregate_document_traces",
     "decode_payload",
+    "decode_payload_full",
     "default_document_id",
     "encode_payload",
     "expand_trace_paths",
-    "full_detail_enabled",
     "get_detail",
     "load_trace_file",
     "load_traces",
-    "model_span",
     "normalize_detail",
     "operator_trace",
     "page_scope",
     "page_summaries_dataframe",
     "record_model",
+    "record_page_work",
     "registered_models",
     "reset_detail",
     "set_detail",
