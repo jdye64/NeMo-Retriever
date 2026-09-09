@@ -24,8 +24,10 @@ YOLOX_PAD_VALUE: float = 114.0
 # Detector input resolution used by nemotron-ocr v1/v2.
 OCR_INFER_LENGTH: int = 1024
 
-# Tile side length for the VL embed/rerank vision tower.
-VL_TILE_SIZE: int = 448
+# Tile side length for the VL embed/rerank vision tower. Both VL repos ship a
+# SigLIP tower with image_size=512 and patch_size=16, so its position embedding
+# table holds (512/16)**2 = 1024 entries and a smaller tile fails to broadcast.
+VL_TILE_SIZE: int = 512
 
 IMAGENET_MEAN: tuple[float, float, float] = (0.485, 0.456, 0.406)
 IMAGENET_STD: tuple[float, float, float] = (0.229, 0.224, 0.225)
@@ -121,7 +123,7 @@ class EmbedConfig:
     min_tiles: int = 1
     max_tiles: int = 6
     use_thumbnail: bool = True
-    norm_type: Literal["imagenet", "siglip"] = "imagenet"
+    norm_type: Literal["imagenet", "siglip"] = "siglip"
     query_prefix: str = "query:"
     document_prefix: str = "passage:"
     normalize: bool = True
@@ -137,7 +139,7 @@ class RerankConfig:
     min_tiles: int = 1
     max_tiles: int = 6
     use_thumbnail: bool = True
-    norm_type: Literal["imagenet", "siglip"] = "imagenet"
+    norm_type: Literal["imagenet", "siglip"] = "siglip"
     batch_size: int = 8
 
 

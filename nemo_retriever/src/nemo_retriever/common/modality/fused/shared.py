@@ -17,7 +17,9 @@ and ``table_structure_v1`` came from four actors or from one.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
 import traceback
 from typing import Any, Dict, List, Sequence
@@ -30,6 +32,30 @@ FUSED_IMPORT_HINT = (
     "method='fused' requires the `nemo_retriever_fused` package, which is not installed. "
     "Install it from the in-repo project: `pip install ./uber_model/nemo-retriever`."
 )
+
+
+def _record_trace(event: str, duration_s: float, extra: Dict[str, Any] | None = None) -> None:
+    """Append one JSON record per fused batch when tracing is enabled.
+
+    Follows the same opt-in shape as the LanceDB timing hook: point
+    ``NV_INGEST_FUSED_TRACE_PATH`` at a file and each batch appends one JSON
+    object, so a run that dies partway still leaves the batches it finished.
+    """
+    trace_path = os.getenv("NV_INGEST_FUSED_TRACE_PATH")
+    if not trace_path:
+        return
+    payload = {
+        "event": event,
+        "duration_s": duration_s,
+        "timestamp_s": time.time(),
+    }
+    if extra:
+        payload.update(extra)
+    trace_dir = os.path.dirname(trace_path)
+    if trace_dir:
+        os.makedirs(trace_dir, exist_ok=True)
+    with open(trace_path, "a") as f:
+        f.write(json.dumps(payload) + "\n")
 
 
 def _error_payload(*, stage: str, exc: BaseException) -> Dict[str, Any]:
@@ -207,13 +233,24 @@ def fused_extract_pages(
     try:
         if model is None:
             model = load_fused_model()
-        result = model(pending_b64, page_ids=pending_ids)
+        # Skip the embed stage inside the model when a downstream embed stage
+        # owns embedding, so element granularity does not pay for it twice.
+        result = model(pending_b64, page_ids=pending_ids, embed_pages=embed_pages)
     except Exception as exc:
         _logger.warning(
             "Fused extraction failed for %d pages: %s: %s",
             len(pending_rows),
             exc.__class__.__name__,
             exc,
+        )
+        _record_trace(
+            "fused.extract_failed",
+            time.perf_counter() - started,
+            {
+                "pages": len(pending_rows),
+                "error_type": exc.__class__.__name__,
+                "error": str(exc),
+            },
         )
         payload = _error_payload(stage="fused_invoke", exc=exc)
         for row_index in pending_rows:
@@ -264,6 +301,26 @@ def fused_extract_pages(
         len(pending_rows),
         elapsed,
         1000.0 * elapsed / len(pending_rows),
+    )
+
+    # The model records per-stage device time with CUDA events, which is the
+    # only per-stage breakdown available without attaching a profiler.
+    stage_timings = getattr(result, "timings", None) or ()
+    if stage_timings:
+        _logger.info(
+            "Fused stage device time: %s",
+            ", ".join(f"{timing.name}={timing.milliseconds:.1f}ms" for timing in stage_timings),
+        )
+
+    _record_trace(
+        "fused.extract",
+        elapsed,
+        {
+            "pages": len(pending_rows),
+            "ms_per_page": 1000.0 * elapsed / len(pending_rows),
+            "embed_pages": bool(embed_pages),
+            "stages_ms": {timing.name: float(timing.milliseconds) for timing in stage_timings},
+        },
     )
 
     return _assign_columns(

@@ -284,3 +284,6 @@ dist*
 
 # Rotated service logs
 *.log.*
+
+# Nsight reports and scratch indexes from scripts/fused_ingest_trace.sh
+.fused-traces/
