@@ -32,6 +32,11 @@ def get_warmed_model(key: str) -> Any | None:
     return _REGISTRY.get(key)
 
 
+def warmed_model_keys() -> list[str]:
+    """Return the sorted keys currently warmed in this process."""
+    return sorted(_REGISTRY)
+
+
 def clear_warmed_models() -> None:
     """Reset registry state (for tests)."""
     global _WARMED
