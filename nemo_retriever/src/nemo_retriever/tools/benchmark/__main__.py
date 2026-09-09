@@ -10,6 +10,7 @@ from nemo_retriever.tools.benchmark import (
     all_actor,
     audio_extract_actor,
     extract_actor,
+    fused_compare,
     ocr_actor,
     page_elements_actor,
     split_actor,
@@ -22,6 +23,7 @@ app.add_typer(audio_extract_actor.app, name="audio-extract")
 app.add_typer(page_elements_actor.app, name="page-elements")
 app.add_typer(ocr_actor.app, name="ocr")
 app.add_typer(all_actor.app, name="all")
+app.add_typer(fused_compare.app, name="fused-compare")
 
 
 def main() -> None:
