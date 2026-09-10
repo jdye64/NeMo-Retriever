@@ -1,0 +1,61 @@
+[project]
+name = "gpu-pdf-render"
+version = "0.1.0"
+description = "Research library for GPU-resident full-document PDF rasterization to PNG and JPEG."
+authors = [
+  { name = "Jeremy Dyer", email = "jdyer@nvidia.com" },
+]
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pypdf>=5.0.0",
+    "Pillow>=10.0.0",
+    "typer>=0.12.0",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "cupy-cuda12x>=13.0.0",
+]
+dev = ["pytest>=8.2.1", "ruff>=0.4.5"]
+
+[project.scripts]
+gpu-pdf-render = "gpu_pdf_render.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/NVIDIA/NeMo-Retriever"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gpu_pdf_render"]
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::Warning"]
+markers = [
+    "cuda: tests that require a CUDA device",
+]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
