@@ -2527,7 +2527,9 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
     { name = "s3fs" },
+    { name = "sqlalchemy" },
     { name = "sqlglot" },
+    { name = "sqlmodel" },
     { name = "tokenizers" },
     { name = "tqdm" },
     { name = "typer" },
@@ -2719,7 +2721,9 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'service'", specifier = ">=1.6.0" },
     { name = "scipy", marker = "extra == 'multimedia'", specifier = ">=1.11.0" },
     { name = "soundfile", marker = "extra == 'multimedia'", specifier = ">=0.12.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.31,<2.1" },
     { name = "sqlglot", specifier = ">=30.0.0" },
+    { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "timm", marker = "extra == 'local'", specifier = "==1.0.22" },
     { name = "tokenizers", specifier = ">=0.21.1,<0.23" },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'local'", specifier = "==2.11.0" },
@@ -4736,6 +4740,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/43/ed/a6c45aec29353b6392ea34548c40af3ac6ffd6bc5572cf23b2ce250876fc/sqlglot-30.12.0.tar.gz", hash = "sha256:6b8369704662d4f654bc934cea4dd31c916c2a571b389210cb9e951a275e5fd9", size = 5905110, upload-time = "2026-06-26T14:09:40.408Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/9e/82a390ecc85f066ff80affa01d195f744e3de60ad4d695b8de31c9a66da3/sqlglot-30.12.0-py3-none-any.whl", hash = "sha256:86cccc610073c645c03e72b55b60ae0518aa3253a7fc3bd56551370d003c6554", size = 707583, upload-time = "2026-06-26T14:09:38.525Z" },
+]
+
+[[package]]
+name = "sqlmodel"
+version = "0.0.42"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sqlalchemy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ab/50/27188d8cbccabf9968d74d4095765399dbc4f9fcae95e928fda69aa44a21/sqlmodel-0.0.42.tar.gz", hash = "sha256:9ecec2b6aa4c2aa58da39d2572e7bef4373419dcd6ec52973c07de7be2b1c516", size = 91737, upload-time = "2026-08-28T19:42:01.611Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/37/d7d6b12b9066005c237de3d52b599298a2693ac423bff0e6b97a90b90bf8/sqlmodel-0.0.42-py3-none-any.whl", hash = "sha256:a732dab1a40e5cbd6ac250cf2b12e8d9b1bf1a47edf27c34d612f359e8875c63", size = 29991, upload-time = "2026-08-28T19:42:00.568Z" },
 ]
 
 [[package]]

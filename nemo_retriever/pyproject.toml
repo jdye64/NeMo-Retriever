@@ -69,6 +69,8 @@ dependencies = [
   "jinja2>=3.1",
   # Service layer
   "fastapi>=0.114.0",
+  "sqlalchemy>=2.0.31,<2.1",
+  "sqlmodel>=0.0.22",
   "uvicorn[standard]>=0.30.0",
   "python-multipart>=0.0.9",
   "prometheus-fastapi-instrumentator>=8.0,<9",
