@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 from nemo_retriever.models.nim.error_reporter import report_error
 from nemo_retriever.models import VL_EMBED_MODEL, resolve_embed_model
 from nemo_retriever.common.params.models import IMAGE_MODALITIES
+from nemo_retriever.common.tracing import page_keys_from_frame, trace_span
 from nemo_retriever.models.inference.main_text_embed import TextEmbeddingConfig, create_text_embeddings_for_df
 
 
@@ -82,20 +83,30 @@ def _embed_group(
         nim_http_max_concurrent=max(1, int(nim_http_max_concurrent)),
     )
 
-    out_df, _ = create_text_embeddings_for_df(
-        group_df,
-        task_config={
-            "api_key": api_key,
-            "embedder": embedder,
-            "multimodal_embedder": multimodal_embedder,
-            "endpoint_url": endpoint,
-            "embed_model_provider_prefix": embed_model_provider_prefix,
-            "local_batch_size": int(effective_batch_size),
-            "nim_http_max_concurrent": max(1, int(nim_http_max_concurrent)),
-            "request_timeout_s": float(request_timeout_s),
-        },
-        transform_config=cfg,
-    )
+    # The embedder batches and parallelizes internally, so one span covers the
+    # whole modality group and per-page rollups charge each page its share.
+    with trace_span(
+        "embed.group",
+        pages=page_keys_from_frame(group_df),
+        modality=str(group_modality),
+        rows=int(len(group_df.index)),
+        batch_size=int(effective_batch_size),
+        remote=endpoint is not None,
+    ):
+        out_df, _ = create_text_embeddings_for_df(
+            group_df,
+            task_config={
+                "api_key": api_key,
+                "embedder": embedder,
+                "multimodal_embedder": multimodal_embedder,
+                "endpoint_url": endpoint,
+                "embed_model_provider_prefix": embed_model_provider_prefix,
+                "local_batch_size": int(effective_batch_size),
+                "nim_http_max_concurrent": max(1, int(nim_http_max_concurrent)),
+                "request_timeout_s": float(request_timeout_s),
+            },
+            transform_config=cfg,
+        )
     return out_df
 
 

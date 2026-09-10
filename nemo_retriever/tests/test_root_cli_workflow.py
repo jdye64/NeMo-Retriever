@@ -10,6 +10,7 @@ import itertools
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import sys
 from typing import Any
@@ -27,6 +28,7 @@ import nemo_retriever.cli.ingest_workflow as ingest_workflow
 import nemo_retriever.cli.ingest.graph_commands as ingest_cli_graph
 import nemo_retriever.cli.ingest.shared as ingest_cli_shared
 import nemo_retriever.cli.shared as cli_shared
+from nemo_retriever.common.tracing import DEFAULT_TRACE_DIR, PipelineTrace, activate_trace, stage_span
 from nemo_retriever.ingestor.graph_ingestor import GraphIngestor
 from nemo_retriever.common.params import (
     ASRParams,
@@ -1641,6 +1643,145 @@ def test_resolve_ingest_plan_validates_run_mode_before_creating_ingestor(
                 runtime=ingest_plan.IngestRuntimeOptions(run_mode="parallel"),  # type: ignore[arg-type]
             )
         )
+
+
+def _trace_plan_request(document: Any, **runtime_kwargs: Any) -> Any:
+    return ingest_plan.IngestPlanRequest(
+        source=ingest_plan.IngestSourceOptions(documents=[str(document)], input_type="pdf"),
+        runtime=ingest_plan.IngestRuntimeOptions(**runtime_kwargs),
+    )
+
+
+def _pdf_fixture(tmp_path: Any, name: str = "traced.pdf") -> Any:
+    document = tmp_path / name
+    document.write_bytes(b"%PDF-1.4\n")
+    return document
+
+
+def test_resolve_ingest_plan_leaves_traces_off_by_default(tmp_path) -> None:
+    plan = ingest_plan.resolve_ingest_plan(_trace_plan_request(_pdf_fixture(tmp_path)))
+    assert plan.trace_dir is None
+
+
+def test_resolve_ingest_plan_defaults_the_trace_directory(tmp_path) -> None:
+    plan = ingest_plan.resolve_ingest_plan(_trace_plan_request(_pdf_fixture(tmp_path), save_traces=True))
+    assert plan.trace_dir == DEFAULT_TRACE_DIR
+
+
+def test_trace_dir_option_implies_saving_traces(tmp_path) -> None:
+    destination = tmp_path / "my-traces"
+    plan = ingest_plan.resolve_ingest_plan(_trace_plan_request(_pdf_fixture(tmp_path), trace_dir=str(destination)))
+    assert plan.trace_dir == str(destination)
+
+
+def test_saving_traces_is_rejected_for_batch_run_mode(tmp_path) -> None:
+    with pytest.raises(ValueError, match="requires `retriever ingest local`"):
+        ingest_plan.resolve_ingest_plan(_trace_plan_request(_pdf_fixture(tmp_path), run_mode="batch", save_traces=True))
+
+
+def test_execute_ingest_plan_saves_traces_and_reports_the_path(monkeypatch, tmp_path) -> None:
+    trace = PipelineTrace()
+    with activate_trace(trace):
+        with stage_span("PDFExtractionActor") as span:
+            span.add_pages([("traced.pdf", 1)])
+
+    fake_ingestor = _make_fake_ingestor()
+    fake_ingestor.ingest.return_value = ([{"status": "ok"}], trace)
+    monkeypatch.setattr(ingest_execution, "create_ingestor", lambda **_kwargs: fake_ingestor)
+
+    plan = ingest_plan.resolve_ingest_plan(
+        _trace_plan_request(_pdf_fixture(tmp_path), trace_dir=str(tmp_path / "traces"))
+    )
+    execution = ingest_execution.execute_ingest_plan(plan)
+
+    assert fake_ingestor.ingest.call_args.kwargs == {"return_traces": True}
+    saved = Path(execution.trace_path)
+    assert saved.parent == tmp_path / "traces"
+    assert execution.to_summary_dict()["trace_path"] == str(saved)
+    records = [json.loads(line) for line in saved.read_text(encoding="utf-8").splitlines() if line]
+    assert [record["name"] for record in records] == ["PDFExtractionActor"]
+    assert records[0]["n_documents"] == 1
+
+
+def test_execute_ingest_plan_omits_trace_path_when_not_requested(monkeypatch, tmp_path) -> None:
+    fake_ingestor = _make_fake_ingestor()
+    monkeypatch.setattr(ingest_execution, "create_ingestor", lambda **_kwargs: fake_ingestor)
+
+    plan = ingest_plan.resolve_ingest_plan(_trace_plan_request(_pdf_fixture(tmp_path)))
+    execution = ingest_execution.execute_ingest_plan(plan)
+
+    assert fake_ingestor.ingest.call_args.kwargs == {}
+    assert execution.trace_path is None
+    assert "trace_path" not in execution.to_summary_dict()
+
+
+def test_a_failed_trace_write_does_not_fail_the_ingest(monkeypatch, tmp_path, caplog) -> None:
+    fake_ingestor = _make_fake_ingestor()
+    fake_ingestor.ingest.return_value = ([{"status": "ok"}], PipelineTrace())
+    monkeypatch.setattr(ingest_execution, "create_ingestor", lambda **_kwargs: fake_ingestor)
+    monkeypatch.setattr(
+        ingest_execution,
+        "save_ingest_trace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read-only file system")),
+    )
+
+    plan = ingest_plan.resolve_ingest_plan(
+        _trace_plan_request(_pdf_fixture(tmp_path), trace_dir=str(tmp_path / "traces"))
+    )
+    with caplog.at_level(logging.WARNING):
+        execution = ingest_execution.execute_ingest_plan(plan)
+
+    assert execution.trace_path is None
+    assert execution.n_rows is not None
+    assert "could not save ingest traces" in caplog.text
+
+
+def test_ingest_summary_tells_the_user_where_traces_landed(capsys) -> None:
+    ingest_cli_shared.print_ingest_summary(
+        {
+            "n_documents": 2,
+            "lancedb_uri": "lancedb",
+            "table_name": "nemo-retriever",
+            "n_rows": 12,
+            "trace_path": ".ingest_traces/ingest-trace-run-1.jsonl",
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "Saved ingest traces to .ingest_traces/ingest-trace-run-1.jsonl" in output
+    assert 'pandas.read_json(".ingest_traces/ingest-trace-run-1.jsonl", lines=True)' in output
+
+
+def test_ingest_summary_stays_quiet_without_traces(capsys) -> None:
+    ingest_cli_shared.print_ingest_summary(
+        {"n_documents": 1, "lancedb_uri": "lancedb", "table_name": "nemo-retriever", "n_rows": 3}
+    )
+    assert "Saved ingest traces" not in capsys.readouterr().out
+
+
+def test_root_ingest_local_exposes_the_trace_options() -> None:
+    result = RUNNER.invoke(cli_main.app, ["ingest", "local", "--help"])
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+
+    assert result.exit_code == 0
+    assert "--save-traces" in output
+    assert "--trace-dir" in output
+
+
+def test_root_ingest_local_dry_run_reports_the_trace_directory(tmp_path) -> None:
+    document = _pdf_fixture(tmp_path)
+    result = RUNNER.invoke(cli_main.app, ["ingest", "local", str(document), "--dry-run", "--save-traces"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["trace_dir"] == DEFAULT_TRACE_DIR
+
+
+def test_root_ingest_batch_rejects_the_trace_options(tmp_path) -> None:
+    document = _pdf_fixture(tmp_path)
+    result = RUNNER.invoke(cli_main.app, ["ingest", "batch", str(document), "--save-traces"])
+
+    assert result.exit_code == 1
+    assert "requires `retriever ingest local`" in result.output
 
 
 def test_silence_noisy_libraries_sets_env_vars(monkeypatch) -> None:

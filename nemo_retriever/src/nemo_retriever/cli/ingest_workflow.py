@@ -77,6 +77,7 @@ def _ingest_plan_to_dry_run_data(plan: ResolvedIngestPlan) -> dict[str, Any]:
         ],
         "branch_summary": format_branch_summary(plan.branches),
         "create_ingestor": dict(plan.create_kwargs),
+        "trace_dir": plan.trace_dir,
         "extract": _params_to_dry_run_dict(plan.extract_params),
         "text": _params_to_dry_run_dict(plan.text_params),
         "html": _params_to_dry_run_dict(plan.html_params),

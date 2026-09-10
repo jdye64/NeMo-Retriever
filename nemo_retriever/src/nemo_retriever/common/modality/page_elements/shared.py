@@ -14,6 +14,7 @@ import traceback
 import pandas as pd
 from nemo_retriever.models.nim.nim import NIMClient, invoke_page_elements_batches
 from nemo_retriever.common.params import RemoteRetryParams
+from nemo_retriever.common.tracing import page_index, trace_span
 from nemo_retriever.common.modality.page_elements.local import (
     YOLOX_PAGE_V3_CLASS_LABELS,
     YOLOX_PAGE_V3_FINAL_SCORE,
@@ -519,25 +520,29 @@ def detect_page_elements_v3(
             YOLOX_PAGE_V3_FINAL_SCORE.get(_RETRIEVER_TO_API.get(name, name), 0.0) for name in label_names
         ]
 
-    for _, row in pages_df.iterrows():
-        try:
-            b64 = row.get("page_image")["image_b64"]
-            if not b64:
-                raise ValueError("No usable image_b64 found in row.")
-            row_b64.append(b64)
-            if use_remote:
+    pages = page_index(pages_df)
+    for row_position, (_, row) in enumerate(pages_df.iterrows()):
+        with trace_span("page_elements.decode", page=pages(row_position)) as decode_span:
+            try:
+                b64 = row.get("page_image")["image_b64"]
+                if not b64:
+                    raise ValueError("No usable image_b64 found in row.")
+                decode_span.set(image_b64_chars=len(b64))
+                row_b64.append(b64)
+                if use_remote:
+                    row_tensors.append(None)
+                    row_shapes.append(None)
+                else:
+                    t, orig_shape = _decode_b64_image_to_np_array(b64)
+                    row_tensors.append(t)
+                    row_shapes.append(orig_shape)
+                    decode_span.set(image_height=orig_shape[0], image_width=orig_shape[1])
+                row_payloads.append({"detections": []})
+            except BaseException as e:
                 row_tensors.append(None)
                 row_shapes.append(None)
-            else:
-                t, orig_shape = _decode_b64_image_to_np_array(b64)
-                row_tensors.append(t)
-                row_shapes.append(orig_shape)
-            row_payloads.append({"detections": []})
-        except BaseException as e:
-            row_tensors.append(None)
-            row_shapes.append(None)
-            row_b64.append(None)
-            row_payloads.append(_error_payload(stage="decode_image", exc=e))
+                row_b64.append(None)
+                row_payloads.append(_error_payload(stage="decode_image", exc=e))
 
     # Run inference over only valid rows, but write results back in original order.
     if use_remote:
@@ -556,48 +561,59 @@ def detect_page_elements_v3(
                 valid_b64.append(b64)
 
         t0 = time.perf_counter()
-        try:
-            _invoke_kw = dict(
-                invoke_url=invoke_url,
-                image_b64_list=valid_b64,
-                api_key=api_key,
-                timeout_s=float(request_timeout_s),
-                max_batch_size=int(inference_batch_size),
-                max_retries=int(retry.remote_max_retries),
-                max_429_retries=int(retry.remote_max_429_retries),
-            )
-            if nim_client is not None:
-                response_items = nim_client.invoke_page_elements_batches(**_invoke_kw)
-            else:
-                response_items = invoke_page_elements_batches(
-                    **_invoke_kw,
-                    max_pool_workers=int(retry.remote_max_pool_workers),
+        # One request covers every valid page, so the span carries all of their
+        # keys and per-page rollups charge each page its share of the request.
+        with trace_span(
+            "page_elements.remote_invoke",
+            pages=pages.many(valid_indices),
+            images=len(valid_b64),
+            max_batch_size=int(inference_batch_size),
+        ) as invoke_span:
+            try:
+                _invoke_kw = dict(
+                    invoke_url=invoke_url,
+                    image_b64_list=valid_b64,
+                    api_key=api_key,
+                    timeout_s=float(request_timeout_s),
+                    max_batch_size=int(inference_batch_size),
+                    max_retries=int(retry.remote_max_retries),
+                    max_429_retries=int(retry.remote_max_429_retries),
                 )
-            elapsed = time.perf_counter() - t0
+                if nim_client is not None:
+                    response_items = nim_client.invoke_page_elements_batches(**_invoke_kw)
+                else:
+                    response_items = invoke_page_elements_batches(
+                        **_invoke_kw,
+                        max_pool_workers=int(retry.remote_max_pool_workers),
+                    )
+                elapsed = time.perf_counter() - t0
 
-            if len(response_items) != len(valid_indices):
-                raise RuntimeError(
-                    "Remote response count mismatch: " f"expected {len(valid_indices)}, got {len(response_items)}"
-                )
+                if len(response_items) != len(valid_indices):
+                    raise RuntimeError(
+                        "Remote response count mismatch: " f"expected {len(valid_indices)}, got {len(response_items)}"
+                    )
 
-            for local_i, row_i in enumerate(valid_indices):
-                dets = _remote_response_to_detections(
-                    response_json=response_items[local_i],
-                    label_names=label_names,
-                    thresholds_per_class=thresholds_per_class,
-                )
-                row_payloads[row_i] = {
-                    "detections": dets,
-                    "timing": {"seconds": float(elapsed)},
-                    "error": None,
-                }
-        except BaseException as e:
-            elapsed = time.perf_counter() - t0
-            print(f"Warning: page_elements remote inference failed: {type(e).__name__}: {e}")
-            for row_i in valid_indices:
-                row_payloads[row_i] = _error_payload(stage="remote_inference", exc=e) | {
-                    "timing": {"seconds": float(elapsed)}
-                }
+                for local_i, row_i in enumerate(valid_indices):
+                    with trace_span("page_elements.parse_response", page=pages(row_i)) as parse_span:
+                        dets = _remote_response_to_detections(
+                            response_json=response_items[local_i],
+                            label_names=label_names,
+                            thresholds_per_class=thresholds_per_class,
+                        )
+                        parse_span.set(detections=len(dets))
+                    row_payloads[row_i] = {
+                        "detections": dets,
+                        "timing": {"seconds": float(elapsed)},
+                        "error": None,
+                    }
+            except BaseException as e:
+                elapsed = time.perf_counter() - t0
+                invoke_span.set(failed=True, error=f"{type(e).__name__}: {e}")
+                print(f"Warning: page_elements remote inference failed: {type(e).__name__}: {e}")
+                for row_i in valid_indices:
+                    row_payloads[row_i] = _error_payload(stage="remote_inference", exc=e) | {
+                        "timing": {"seconds": float(elapsed)}
+                    }
 
     for chunk_start in range(0, len(valid_indices), int(inference_batch_size)):
         chunk_idx = valid_indices[chunk_start : chunk_start + int(inference_batch_size)]
@@ -618,7 +634,8 @@ def detect_page_elements_v3(
             orig_shapes.append(sh)
             try:
                 # `preprocess` may accept/return torch.Tensor or np.ndarray.
-                pre = model.preprocess(t)  # type: ignore[arg-type]
+                with trace_span("page_elements.local_preprocess", page=pages(i)):
+                    pre = model.preprocess(t)  # type: ignore[arg-type]
 
                 # Normalize to a single-image CHW-like item (torch or numpy); we'll convert to torch at stack time.
                 if isinstance(pre, torch.Tensor):
@@ -644,11 +661,13 @@ def detect_page_elements_v3(
         batch = torch.stack([_ensure_chw_float_tensor(x) for x in pre_list], dim=0)
 
         t0 = time.perf_counter()
+        chunk_pages = pages.many(chunk_idx)
         try:
             # Best-effort: pass list of shapes for batching; fall back to per-image if unsupported.
-            with torch.inference_mode():
-                with torch.autocast(device_type="cuda"):
-                    preds = model(batch, orig_shapes) if len(pre_list) > 1 else model(batch, orig_shapes[0])
+            with trace_span("page_elements.local_inference", pages=chunk_pages, batch_size=len(pre_list)):
+                with torch.inference_mode():
+                    with torch.autocast(device_type="cuda"):
+                        preds = model(batch, orig_shapes) if len(pre_list) > 1 else model(batch, orig_shapes[0])
             # Some local wrappers return only the first prediction dict even for batched inputs.
             # Detect that and force per-image invocation so every row gets its own detections.
             if len(pre_list) > 1:
@@ -660,10 +679,11 @@ def detect_page_elements_v3(
                     )
         except Exception as ex:
             print(f"Error invoking model: {ex}")
-            preds_list: List[Any] = []
-            for j in range(int(batch.shape[0])):
-                preds_list.append(model(batch[j : j + 1], orig_shapes[j]))
-            preds = preds_list
+            with trace_span("page_elements.local_inference_per_image", pages=chunk_pages, batch_size=len(pre_list)):
+                preds_list: List[Any] = []
+                for j in range(int(batch.shape[0])):
+                    preds_list.append(model(batch[j : j + 1], orig_shapes[j]))
+                preds = preds_list
         elapsed = time.perf_counter() - t0
 
         # Normalize preds into a list of per-image prediction dicts.
@@ -708,9 +728,20 @@ def detect_page_elements_v3(
                 label_names=label_names,
             )
             # Apply v3 postprocessing (box fusion via WBF at iou=0.01, title matching, expansion, overlap removal)
-            per_image_dets = [_apply_page_elements_v3_postprocess(dets) for dets in per_image_dets]
-            # Apply per-class final score filtering AFTER WBF (matches NIM pipeline ordering)
-            per_image_dets = [_apply_final_score_filter(dets) for dets in per_image_dets]
+            # followed by per-class final score filtering (matches NIM pipeline ordering). Cost scales with
+            # detection count, so each page gets its own span.
+            fused_dets: List[List[Dict[str, Any]]] = []
+            for local_i, dets in enumerate(per_image_dets):
+                row_i = chunk_idx[local_i] if local_i < len(chunk_idx) else None
+                with trace_span(
+                    "page_elements.local_postprocess",
+                    page=None if row_i is None else pages(row_i),
+                ) as post_span:
+                    post_span.set(raw_detections=len(dets))
+                    dets = _apply_final_score_filter(_apply_page_elements_v3_postprocess(dets))
+                    post_span.set(detections=len(dets))
+                fused_dets.append(dets)
+            per_image_dets = fused_dets
             for local_i, row_i in enumerate(chunk_idx):
                 dets = per_image_dets[local_i] if local_i < len(per_image_dets) else []
                 row_payloads[row_i] = {

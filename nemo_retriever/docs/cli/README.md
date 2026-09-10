@@ -394,8 +394,43 @@ These options apply to `retriever ingest`, `retriever ingest local`, and
 | `--dedup` | off | Add image deduplication before captioning and embedding. |
 | `--text-chunk` | off | Enable token chunking during extraction. |
 | `--store-images-uri` | unset | Store extracted images at a local path or fsspec-compatible URI. |
+| `--save-traces` | off | Local mode only. Save this job's per-stage and per-page timing spans as one JSONL file under `./.ingest_traces`. |
+| `--trace-dir` | `.ingest_traces` | Local mode only. Directory for saved traces. Implies `--save-traces`. |
 | `--dry-run` | off | Print the resolved ingest plan without creating an ingestor. |
 | `--quiet/--no-quiet` | quiet | Suppress verbose progress output by default. |
+
+#### Save ingest traces
+
+`retriever ingest local --save-traces` writes one JSONL file per ingest job and
+prints its path when the run finishes:
+
+```console
+$ retriever ingest local ./data --save-traces
+Ingested 2 file(s) → 87 row(s) in LanceDB lancedb/nemo-retriever.
+Saved ingest traces to .ingest_traces/ingest-trace-20260910T131328Z-57799.jsonl
+  Load with: pandas.read_json(".ingest_traces/ingest-trace-20260910T131328Z-57799.jsonl", lines=True)
+```
+
+Each line is one span charged to one page, so a single file answers both which
+operation was slow and which pages were slow:
+
+```python
+import pandas as pd
+
+df = pd.read_json(".ingest_traces/ingest-trace-20260910T131328Z-57799.jsonl", lines=True)
+df.groupby("name").seconds.sum().sort_values(ascending=False)      # slowest operations
+df.groupby(["source", "page_number"]).seconds.sum().nlargest(10)   # slowest pages
+```
+
+Alongside the span columns (`name`, `stage`, `depth`, `seconds`, `span_self_s`,
+`error`, `attributes`), every row repeats that page's captured characteristics,
+such as `text_chars`, `image_megapixels`, `dpi`, and `num_detections`. Refer to
+[Per-page profiling with pipeline traces](../../../docs/docs/extraction/performance_guide.md#pipeline-traces)
+for the full column reference and the equivalent Python API.
+
+`--save-traces` requires `retriever ingest local`. Batch mode runs stages in Ray
+actors, which collect no in-process spans, so the flag is rejected there. The
+default `.ingest_traces` directory is listed in the repository `.gitignore`.
 
 Batch-only options include `--ray-address`, `--ray-log-to-driver`,
 `--pdf-split-batch-size`, `--pdf-extract-workers`, `--ocr-workers`,

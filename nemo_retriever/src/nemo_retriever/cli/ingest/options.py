@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 
 from nemo_retriever.common.params import CaptionParams
+from nemo_retriever.common.tracing import DEFAULT_TRACE_DIR
 from nemo_retriever.ingest.plan import (
     AudioSplitTypeValue,
     IngestIndexModeValue,
@@ -226,6 +227,24 @@ IndexModeOption = Annotated[
             "table on append. Dense, hybrid, and sparse are advanced overrides for experiments or specialized "
             "deployments."
         ),
+    ),
+]
+SaveTracesOption = Annotated[
+    bool,
+    typer.Option(
+        "--save-traces",
+        help=(
+            "Local mode only. Save per-stage and per-page timing spans for this job as one JSONL file, "
+            f"loadable with pandas.read_json(path, lines=True). Written to ./{DEFAULT_TRACE_DIR} "
+            "unless --trace-dir is given."
+        ),
+    ),
+]
+TraceDirOption = Annotated[
+    str | None,
+    typer.Option(
+        "--trace-dir",
+        help=f"Local mode only. Directory for saved traces. Implies --save-traces. Defaults to ./{DEFAULT_TRACE_DIR}.",
     ),
 ]
 RayAddressOption = Annotated[

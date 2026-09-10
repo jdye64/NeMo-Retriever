@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from nemo_retriever.common.tracing import save_ingest_trace
 from nemo_retriever.ingest.plan import ResolvedIngestPlan
 from nemo_retriever.ingestor.manifest import format_branch_summary
 from nemo_retriever.ingestor import Ingestor, create_ingestor
@@ -36,6 +37,7 @@ class IngestExecutionResult:
     lancedb_uri: str
     table_name: str
     run_metadata: dict[str, Any]
+    trace_path: str | None = None
 
     @property
     def documents(self) -> list[str]:
@@ -46,13 +48,16 @@ class IngestExecutionResult:
         return f"{self.lancedb_uri}/{self.table_name}"
 
     def to_summary_dict(self) -> dict[str, Any]:
-        return {
+        summary: dict[str, Any] = {
             "n_documents": len(self.plan.documents),
             "lancedb_uri": self.lancedb_uri,
             "table_name": self.table_name,
             "n_rows": self.n_rows,
             "result_n_rows": self.result_n_rows,
         }
+        if self.trace_path is not None:
+            summary["trace_path"] = self.trace_path
+        return summary
 
 
 def build_ingest_pipeline(plan: ResolvedIngestPlan) -> Ingestor:
@@ -114,7 +119,7 @@ def execute_ingest_plan(
     if verify_rows and not overwrite:
         initial_n_rows = _count_lancedb_rows(lancedb_uri, table_name)
 
-    result = build_ingest_pipeline(plan).ingest()
+    result, trace_path = _ingest_with_optional_trace(plan)
     if plan.sparse:
         _write_sparse_lancedb_result(result, lancedb_uri=lancedb_uri, table_name=table_name, overwrite=overwrite)
 
@@ -143,7 +148,27 @@ def execute_ingest_plan(
             "profile": plan.profile,
             "branch_summary": format_branch_summary(plan.branches),
         },
+        trace_path=trace_path,
     )
+
+
+def _ingest_with_optional_trace(plan: ResolvedIngestPlan) -> tuple[object, str | None]:
+    """Run the pipeline, saving this job's trace when the plan asked for one.
+
+    A failed trace write must not discard a successful ingest, so the error is
+    reported and execution continues.
+    """
+    ingestor = build_ingest_pipeline(plan)
+    if plan.trace_dir is None:
+        return ingestor.ingest(), None
+
+    result, trace = ingestor.ingest(return_traces=True)
+    try:
+        path = save_ingest_trace(trace, trace_dir=plan.trace_dir, documents=len(plan.documents))
+    except OSError as exc:
+        logger.warning("could not save ingest traces to %s: %s", plan.trace_dir, exc)
+        return result, None
+    return result, str(path)
 
 
 def _resolve_lancedb_target(plan: ResolvedIngestPlan) -> tuple[str, str, bool] | None:

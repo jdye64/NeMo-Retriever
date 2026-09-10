@@ -55,3 +55,13 @@ def print_ingest_summary(summary: dict[str, Any]) -> None:
         typer.echo(f"Ingested {n_files} file(s) into LanceDB {table_path} (row count unavailable).")
     else:
         typer.echo(f"Ingested {n_files} file(s) → {n_rows} row(s) in LanceDB {table_path}.")
+    print_trace_location(summary)
+
+
+def print_trace_location(summary: dict[str, Any]) -> None:
+    """Tell the user where this job's traces landed and how to read them."""
+    trace_path = summary.get("trace_path")
+    if not trace_path:
+        return
+    typer.echo(f"Saved ingest traces to {trace_path}")
+    typer.echo(f'  Load with: pandas.read_json("{trace_path}", lines=True)')

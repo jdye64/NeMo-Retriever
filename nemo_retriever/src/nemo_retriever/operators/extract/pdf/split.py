@@ -13,6 +13,7 @@ import traceback
 import pandas as pd
 from nemo_retriever.models.nim.error_reporter import report_error
 from nemo_retriever.common.params import PdfSplitParams
+from nemo_retriever.common.tracing import page_key, trace_span
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 from nemo_retriever.operators.cpu_operator import CPUOperator
 from nemo_retriever.graph.designer import designer_component
@@ -146,36 +147,45 @@ def split_pdf_batch(pdf_batch: Any, params: PdfSplitParams | None = None) -> pd.
 
         extra = {k: v for k, v in row.to_dict().items() if k not in _EXPLICIT_COLS}
 
-        try:
-            if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
-                raise ValueError(f"Unsupported bytes payload type: {type(pdf_bytes)!r}")
+        # Splitting is charged to the pages it produces so its cost shows up in
+        # the per-page rollup; a document that yields no pages falls back to
+        # the document-level key (page 0).
+        with trace_span("pdf_split.document", document=pdf_path) as span:
+            try:
+                if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
+                    raise ValueError(f"Unsupported bytes payload type: {type(pdf_bytes)!r}")
 
-            pages = _split_pdf_to_single_page_bytes(pdf_bytes)
-            start_idx = 0 if start_page is None else max(int(start_page) - 1, 0)
-            end_idx = (len(pages) - 1) if end_page is None else min(int(end_page) - 1, len(pages) - 1)
-            if len(pages) == 0 or start_idx > end_idx:
-                continue
+                span.set(source_bytes=len(pdf_bytes))
+                pages = _split_pdf_to_single_page_bytes(pdf_bytes)
+                span.set(pages=len(pages))
+                start_idx = 0 if start_page is None else max(int(start_page) - 1, 0)
+                end_idx = (len(pages) - 1) if end_page is None else min(int(end_page) - 1, len(pages) - 1)
+                if len(pages) == 0 or start_idx > end_idx:
+                    span.add_pages(page_key(pdf_path))
+                    continue
 
-            for page_idx in range(start_idx, end_idx + 1):
-                out_row: Dict[str, Any] = {
-                    "bytes": pages[page_idx],
-                    "path": pdf_path,
-                    "page_number": page_idx + 1,
-                    "metadata": {"source_path": pdf_path},
-                    "source_id": f"{pdf_path}_{page_idx + 1}",
-                }
-                out_row.update(extra)
-                out_rows.append(out_row)
-        except BaseException as e:
-            report_error("pdf_split", e)
-            err = _error_record(
-                source_path=str(pdf_path) if pdf_path is not None else None,
-                stage="split_pdf",
-                exc=e,
-                page_number=0,
-            )
-            err.update(extra)
-            out_rows.append(err)
+                span.add_pages(page_key(pdf_path, index + 1) for index in range(start_idx, end_idx + 1))
+                for page_idx in range(start_idx, end_idx + 1):
+                    out_row: Dict[str, Any] = {
+                        "bytes": pages[page_idx],
+                        "path": pdf_path,
+                        "page_number": page_idx + 1,
+                        "metadata": {"source_path": pdf_path},
+                        "source_id": f"{pdf_path}_{page_idx + 1}",
+                    }
+                    out_row.update(extra)
+                    out_rows.append(out_row)
+            except BaseException as e:
+                span.add_pages(page_key(pdf_path))
+                report_error("pdf_split", e)
+                err = _error_record(
+                    source_path=str(pdf_path) if pdf_path is not None else None,
+                    stage="split_pdf",
+                    exc=e,
+                    page_number=0,
+                )
+                err.update(extra)
+                out_rows.append(err)
 
     return pd.DataFrame(out_rows)
 

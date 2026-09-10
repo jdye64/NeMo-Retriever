@@ -73,6 +73,9 @@ class ExtractionBranchExecutor:
     show_progress: bool
     allow_no_gpu: bool
     ensure_batch_runtime: Callable[[], tuple[Any, Any]]
+    # Optional span payload shared by every inprocess branch and the
+    # post-extraction graph so one run yields one trace.
+    trace: Any | None = None
 
     def execute(self) -> Any:
         logger.info(
@@ -172,7 +175,7 @@ class ExtractionBranchExecutor:
                 effective_extraction.extraction_mode,
             )
             graph = self._build_extraction_only_graph(effective_extraction)
-            executor = InprocessExecutor(graph, show_progress=self.show_progress)
+            executor = InprocessExecutor(graph, show_progress=self.show_progress, trace=self.trace)
             frames.append(executor.ingest(self._inprocess_branch_input(branch)))
 
         combined = concat_dataframes(frames)
@@ -187,7 +190,7 @@ class ExtractionBranchExecutor:
             stage_order=self.post_extract_order,
             reshape_content_before_embed=self._should_reshape_content_before_embed(),
         )
-        return InprocessExecutor(post_graph, show_progress=self.show_progress).ingest(combined)
+        return InprocessExecutor(post_graph, show_progress=self.show_progress, trace=self.trace).ingest(combined)
 
     def _should_reshape_content_before_embed(self) -> bool:
         return any(branch.family in {"pdf", "image"} for branch in self.branches)

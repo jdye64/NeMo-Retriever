@@ -326,6 +326,29 @@ service = create_ingestor(run_mode="service", base_url="http://localhost:7670")
 
 `GraphIngestor` methods include `extract_html()`, `extract_audio()`, `extract_video()`, `get_error_rows()`, and `get_dataset()`. `get_error_rows()` filters rows that contain stage error payloads from a pandas DataFrame or Ray Dataset. If you omit `dataset`, it uses the dataset retained from the last `ingest()` call. `get_dataset()` returns that retained dataset.
 
+#### Graph ingest return contract { #graph-ingest-return-contract }
+
+`GraphIngestor.ingest()` accepts `return_failures` and `return_traces`, either
+as keyword arguments or as fields on `IngestExecuteParams`. A keyword argument
+takes precedence over the value in `params`. The flags change the return shape
+as follows.
+
+| Flags | Return value |
+| --- | --- |
+| Neither flag | `result` |
+| `return_failures=True` | `(result, failures)` |
+| `return_traces=True` | `(result, trace)` |
+| Both flags | `(result, failures, trace)` |
+
+`trace` is a `PipelineTrace` from `nemo_retriever.common.tracing`. It records
+per-stage and per-page spans plus page characteristics for
+`run_mode="inprocess"`. Because `run_mode="batch"` runs stages in Ray actors,
+it returns an empty trace that carries an explanatory note in `trace.notes`.
+The library also caches the most recent requested trace on
+`ingestor.last_trace`, which is `None` until a run requests one. For the
+collection workflow and the reporting methods, refer to
+[Per-page profiling with pipeline traces](performance_guide.md#pipeline-traces).
+
 ::: nemo_retriever.ingestor.graph_ingestor.GraphIngestor
     options:
       heading_level: 4
@@ -345,6 +368,12 @@ service = create_ingestor(run_mode="service", base_url="http://localhost:7670")
 `create_ingestor(run_mode="service")` returns `ServiceIngestor`. Import the class from `nemo_retriever.service.service_ingestor`. `ingest()` returns `ServiceIngestResult`.
 
 Service-only methods include `split()`, `pdf_split_config()`, `save_to_disk()`, `ingest_stream()`, `aingest_stream()`, and `cancel()`. `cancel()` is part of the public class. It currently raises `NotImplementedError` because the service does not expose a cancel endpoint.
+
+`ServiceIngestor.ingest()` also accepts `return_traces=True`, but the flag
+means something different in service mode. It returns the ordered raw
+server-sent event dictionaries observed during the job, not the
+`PipelineTrace` described in
+[Graph ingest return contract](#graph-ingest-return-contract).
 
 #### Choose a service result schema { #service-result-schema }
 

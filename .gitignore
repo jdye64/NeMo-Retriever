@@ -284,3 +284,6 @@ dist*
 
 # Rotated service logs
 *.log.*
+
+# Default destination for `retriever ingest local --save-traces`
+.ingest_traces/

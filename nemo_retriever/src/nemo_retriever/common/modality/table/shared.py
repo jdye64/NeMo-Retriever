@@ -12,6 +12,7 @@ import traceback
 import pandas as pd
 from nemo_retriever.models.nim.error_reporter import report_error
 from nemo_retriever.common.params import RemoteRetryParams
+from nemo_retriever.common.tracing import PageKey, page_key_from_row, trace_span
 
 if TYPE_CHECKING:
     from nemo_retriever.models.nim.nim import NIMClient
@@ -359,40 +360,45 @@ def table_structure_ocr_page_elements(
     flat_crop_b64s: List[str] = []  # parallel list of base64 PNGs (remote only)
     crop_row_indices: List[int] = []  # row index each crop belongs to
 
+    row_page_keys: List[PageKey] = []
     for row_i, row in enumerate(batch_df.itertuples(index=False)):
-        try:
-            pe = getattr(row, "page_elements_v3", None)
-            dets: List[Dict[str, Any]] = []
-            if isinstance(pe, dict):
-                dets = pe.get("detections") or []
-            if not isinstance(dets, list):
-                dets = []
+        row_page_keys.append(page_key_from_row(row))
+        with trace_span("table_structure.crop", page=row_page_keys[row_i]) as crop_span:
+            try:
+                pe = getattr(row, "page_elements_v3", None)
+                dets: List[Dict[str, Any]] = []
+                if isinstance(pe, dict):
+                    dets = pe.get("detections") or []
+                if not isinstance(dets, list):
+                    dets = []
 
-            page_image = getattr(row, "page_image", None) or {}
-            page_image_b64 = page_image.get("image_b64") if isinstance(page_image, dict) else None
+                page_image = getattr(row, "page_image", None) or {}
+                page_image_b64 = page_image.get("image_b64") if isinstance(page_image, dict) else None
 
-            if not isinstance(page_image_b64, str) or not page_image_b64:
-                continue
+                if not isinstance(page_image_b64, str) or not page_image_b64:
+                    continue
 
-            crops = _crop_all_from_page(page_image_b64, dets, {"table"})
-            if not crops:
-                continue
+                crops = _crop_all_from_page(page_image_b64, dets, {"table"})
+                crop_span.set(tables=len(crops))
+                if not crops:
+                    continue
 
-            for crop in crops:
-                flat_crops.append(crop)
-                crop_row_indices.append(row_i)
-                if use_remote_ts:
-                    flat_crop_b64s.append(_np_rgb_to_b64_png(crop[2]))
+                for crop in crops:
+                    flat_crops.append(crop)
+                    crop_row_indices.append(row_i)
+                    if use_remote_ts:
+                        flat_crop_b64s.append(_np_rgb_to_b64_png(crop[2]))
 
-        except BaseException as e:
-            print(f"Warning: table crop collection failed for row {row_i}: {type(e).__name__}: {e}")
-            report_error("table_structure_ocr_page_elements:crop", e, row_index=row_i)
-            all_meta[row_i]["error"] = {
-                "stage": "table_structure_ocr_page_elements:crop",
-                "type": e.__class__.__name__,
-                "message": str(e),
-                "traceback": "".join(traceback.format_exception(type(e), e, e.__traceback__)),
-            }
+            except BaseException as e:
+                crop_span.set(failed=True)
+                print(f"Warning: table crop collection failed for row {row_i}: {type(e).__name__}: {e}")
+                report_error("table_structure_ocr_page_elements:crop", e, row_index=row_i)
+                all_meta[row_i]["error"] = {
+                    "stage": "table_structure_ocr_page_elements:crop",
+                    "type": e.__class__.__name__,
+                    "message": str(e),
+                    "traceback": "".join(traceback.format_exception(type(e), e, e.__traceback__)),
+                }
 
     # If there are no crops at all, short-circuit.
     if not flat_crops:
@@ -433,9 +439,11 @@ def table_structure_ocr_page_elements(
             max_pool_workers=int(retry.remote_max_pool_workers),
         )
 
+    crop_pages: tuple[PageKey, ...] = tuple(dict.fromkeys(row_page_keys[row_i] for row_i in crop_row_indices))
     try:
         if use_remote_ts:
-            response_items = _run_remote_ts()
+            with trace_span("table_structure.remote_invoke", pages=crop_pages, crops=n_crops):
+                response_items = _run_remote_ts()
             if len(response_items) != n_crops:
                 raise RuntimeError(f"Expected {n_crops} table-structure responses, got {len(response_items)}")
             for ci, resp in enumerate(response_items):
@@ -454,18 +462,19 @@ def table_structure_ocr_page_elements(
                 structure_results[ci] = [d for d in parsed if (d.get("score") or 0.0) >= YOLOX_TABLE_MIN_SCORE]
         else:
             for ci, (_, _, crop_array) in enumerate(flat_crops):
-                chw = torch.from_numpy(crop_array).permute(2, 0, 1).contiguous().to(dtype=torch.float32)
-                h, w = crop_array.shape[:2]
-                x = chw.unsqueeze(0)
-                try:
-                    pre = table_structure_model.preprocess(x, (h, w))
-                except TypeError:
-                    pre = table_structure_model.preprocess(x)
-                if isinstance(pre, torch.Tensor) and pre.ndim == 3:
-                    pre = pre.unsqueeze(0)
-                pred = table_structure_model.invoke(pre, (h, w))
-                dets = _prediction_to_detections(pred, label_names=label_names)
-                structure_results[ci] = [d for d in dets if (d.get("score") or 0.0) >= YOLOX_TABLE_MIN_SCORE]
+                with trace_span("table_structure.local_inference", page=row_page_keys[crop_row_indices[ci]]):
+                    chw = torch.from_numpy(crop_array).permute(2, 0, 1).contiguous().to(dtype=torch.float32)
+                    h, w = crop_array.shape[:2]
+                    x = chw.unsqueeze(0)
+                    try:
+                        pre = table_structure_model.preprocess(x, (h, w))
+                    except TypeError:
+                        pre = table_structure_model.preprocess(x)
+                    if isinstance(pre, torch.Tensor) and pre.ndim == 3:
+                        pre = pre.unsqueeze(0)
+                    pred = table_structure_model.invoke(pre, (h, w))
+                    dets = _prediction_to_detections(pred, label_names=label_names)
+                    structure_results[ci] = [d for d in dets if (d.get("score") or 0.0) >= YOLOX_TABLE_MIN_SCORE]
     except BaseException as e:
         print(f"Warning: table-structure failed: {type(e).__name__}: {e}")
         report_error("table_structure_ocr_page_elements:table_structure", e)

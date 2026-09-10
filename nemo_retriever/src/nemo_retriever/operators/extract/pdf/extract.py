@@ -23,6 +23,7 @@ from nemo_retriever.common.api.util.pdf.pdfium import (
 
 import pandas as pd
 
+from nemo_retriever.common.tracing import page_key, trace_span
 from nemo_retriever.models.nim.error_reporter import report_error
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 from nemo_retriever.operators.cpu_operator import CPUOperator
@@ -304,140 +305,157 @@ def pdf_extraction(
 
             extra = {k: v for k, v in row.to_dict().items() if k not in _EXTRACT_EXPLICIT_COLS}
 
-            try:
-                if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
-                    raise RuntimeError(f"Unsupported bytes payload type: {type(pdf_bytes)!r}")
-
-                # Step 1: load the *single-page* PDF bytes.
+            with trace_span("pdf_extract.page", page=page_key(pdf_path, page_number)) as page_span:
                 try:
-                    doc = pdfium.PdfDocument(pdf_bytes)
-                except Exception:
-                    doc = pdfium.PdfDocument(BytesIO(bytes(pdf_bytes)))
+                    if not isinstance(pdf_bytes, (bytes, bytearray, memoryview)):
+                        raise RuntimeError(f"Unsupported bytes payload type: {type(pdf_bytes)!r}")
 
-                # TODO: Extend to support more image formats
-                if image_format not in {"png", "jpeg"}:
-                    raise ValueError(f"Unsupported image_format: {image_format!r}")
-
-                # Step 2: process only the first page (single-page doc).
-                page = None
-                try:
-                    # we can safely assume page[0] only because pre-splitting has already occurred.
-                    page = doc.get_page(0)
-                    is_scanned_page = _is_scanned_page(page)
-
-                    ocr_extraction_needed_for_text = extract_text and (
-                        (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
-                        or text_extraction_method == "ocr"
-                    )
-
-                    # extraction_needed_for_structured = (
-                    #     extract_tables or extract_charts or extract_infographics
-                    # )  # noqa: F841
-
-                    # Default to empty so scanned/OCR pages don't hit a NameError below.
-                    text = ""
-
-                    # Text extraction
-                    if extract_text and not ocr_extraction_needed_for_text:
-                        page_text = _extract_page_text(page)
-                        # TODO: Tiddy up logic here for document depth option
-                        if text_depth == "page":
-                            text = page_text
-                        else:
-                            text = page_text
-
-                    has_text = bool(text.strip()) if extract_text else False
-
-                    want_any_raster = bool(
-                        extract_images
-                        or extract_tables
-                        or extract_charts
-                        or extract_infographics
-                        or extract_page_as_image
-                        or ocr_extraction_needed_for_text
-                    )
-                    render_info: Optional[Dict[str, Any]] = None
-                    if want_any_raster:
-                        render_info = _render_page_to_base64(
-                            page,
-                            dpi=dpi,
-                            image_format=image_format,
-                            jpeg_quality=jpeg_quality,
-                            render_mode=render_mode,
-                        )
-
-                    # Extract cropped images from pdfium page objects.
-                    detected_images: List[Dict[str, Any]] = []
-                    if extract_images:
+                    # Step 1: load the *single-page* PDF bytes.
+                    with trace_span("pdf_extract.load") as load_span:
+                        load_span.set(source_bytes=len(pdf_bytes))
                         try:
-                            base64_images = extract_image_like_objects_from_pdfium_page(page)
-                            for img in base64_images:
-                                max_w = float(img.max_width) if img.max_width else 1.0
-                                max_h = float(img.max_height) if img.max_height else 1.0
-                                x0, y0, x1, y1 = img.bbox
-                                detected_images.append(
-                                    {
-                                        "bbox_xyxy_norm": [
-                                            x0 / max_w,
-                                            y0 / max_h,
-                                            x1 / max_w,
-                                            y1 / max_h,
-                                        ],
-                                        "text": "",
-                                        "image_b64": img.image,
-                                    }
-                                )
+                            doc = pdfium.PdfDocument(pdf_bytes)
                         except Exception:
-                            pass  # Image extraction failure should not crash the pipeline.
+                            doc = pdfium.PdfDocument(BytesIO(bytes(pdf_bytes)))
 
-                    page_record: Dict[str, Any] = {
-                        "path": pdf_path,
-                        "page_number": page_number,
-                        "source_id": source_id,
-                        "text": text if extract_text else "",
-                        "page_image": None,
-                        "images": detected_images,
-                        "tables": [],
-                        "charts": [],
-                        "infographics": [],
-                        "metadata": {
-                            "has_text": has_text,
-                            "needs_ocr_for_text": ocr_extraction_needed_for_text,
-                            "dpi": dpi,
-                            "source_path": pdf_path,
-                            "error": None,
-                        },
-                    }
+                    # TODO: Extend to support more image formats
+                    if image_format not in {"png", "jpeg"}:
+                        raise ValueError(f"Unsupported image_format: {image_format!r}")
 
-                    if want_any_raster and render_info is not None:
-                        # Store the rendered page raster only here; leave the other
-                        # fields empty so downstream stages have a single canonical
-                        # place to find the page image.
-                        page_record["page_image"] = render_info
-
-                    page_record.update(extra)
-                    outputs.append(page_record)
-                finally:
+                    # Step 2: process only the first page (single-page doc).
+                    page = None
                     try:
-                        if page is not None and hasattr(page, "close"):
-                            page.close()
-                    except Exception:
-                        pass
-                    try:
-                        doc.close()
-                    except Exception:
-                        pass
-            except BaseException as e:
-                report_error("pdf_extraction:page_processing", e)
-                err = _error_record(
-                    source_path=str(pdf_path) if pdf_path is not None else None,
-                    stage="page_processing",
-                    exc=e,
-                    page_number=page_number,
-                    dpi=dpi,
-                )
-                err.update(extra)
-                outputs.append(err)
+                        # we can safely assume page[0] only because pre-splitting has already occurred.
+                        page = doc.get_page(0)
+                        with trace_span("pdf_extract.scan_detect"):
+                            is_scanned_page = _is_scanned_page(page)
+
+                        ocr_extraction_needed_for_text = extract_text and (
+                            (text_extraction_method == "pdfium_hybrid" and is_scanned_page)
+                            or text_extraction_method == "ocr"
+                        )
+                        page_span.set(scanned=bool(is_scanned_page), needs_ocr=bool(ocr_extraction_needed_for_text))
+
+                        # extraction_needed_for_structured = (
+                        #     extract_tables or extract_charts or extract_infographics
+                        # )  # noqa: F841
+
+                        # Default to empty so scanned/OCR pages don't hit a NameError below.
+                        text = ""
+
+                        # Text extraction
+                        if extract_text and not ocr_extraction_needed_for_text:
+                            with trace_span("pdf_extract.text") as text_span:
+                                page_text = _extract_page_text(page)
+                                text_span.set(text_chars=len(page_text))
+                            # TODO: Tiddy up logic here for document depth option
+                            if text_depth == "page":
+                                text = page_text
+                            else:
+                                text = page_text
+
+                        has_text = bool(text.strip()) if extract_text else False
+
+                        want_any_raster = bool(
+                            extract_images
+                            or extract_tables
+                            or extract_charts
+                            or extract_infographics
+                            or extract_page_as_image
+                            or ocr_extraction_needed_for_text
+                        )
+                        render_info: Optional[Dict[str, Any]] = None
+                        if want_any_raster:
+                            with trace_span("pdf_extract.render", dpi=dpi, render_mode=render_mode) as render_span:
+                                render_info = _render_page_to_base64(
+                                    page,
+                                    dpi=dpi,
+                                    image_format=image_format,
+                                    jpeg_quality=jpeg_quality,
+                                    render_mode=render_mode,
+                                )
+                                height, width = render_info["orig_shape_hw"]
+                                render_span.set(
+                                    image_height=int(height),
+                                    image_width=int(width),
+                                    image_b64_chars=len(render_info["image_b64"]),
+                                )
+
+                        # Extract cropped images from pdfium page objects.
+                        detected_images: List[Dict[str, Any]] = []
+                        if extract_images:
+                            with trace_span("pdf_extract.images") as images_span:
+                                try:
+                                    base64_images = extract_image_like_objects_from_pdfium_page(page)
+                                    for img in base64_images:
+                                        max_w = float(img.max_width) if img.max_width else 1.0
+                                        max_h = float(img.max_height) if img.max_height else 1.0
+                                        x0, y0, x1, y1 = img.bbox
+                                        detected_images.append(
+                                            {
+                                                "bbox_xyxy_norm": [
+                                                    x0 / max_w,
+                                                    y0 / max_h,
+                                                    x1 / max_w,
+                                                    y1 / max_h,
+                                                ],
+                                                "text": "",
+                                                "image_b64": img.image,
+                                            }
+                                        )
+                                except Exception:
+                                    pass  # Image extraction failure should not crash the pipeline.
+                                images_span.set(images=len(detected_images))
+
+                        page_record: Dict[str, Any] = {
+                            "path": pdf_path,
+                            "page_number": page_number,
+                            "source_id": source_id,
+                            "text": text if extract_text else "",
+                            "page_image": None,
+                            "images": detected_images,
+                            "tables": [],
+                            "charts": [],
+                            "infographics": [],
+                            "metadata": {
+                                "has_text": has_text,
+                                "needs_ocr_for_text": ocr_extraction_needed_for_text,
+                                "dpi": dpi,
+                                "source_path": pdf_path,
+                                "error": None,
+                            },
+                        }
+
+                        if want_any_raster and render_info is not None:
+                            # Store the rendered page raster only here; leave the other
+                            # fields empty so downstream stages have a single canonical
+                            # place to find the page image.
+                            page_record["page_image"] = render_info
+
+                        page_record.update(extra)
+                        outputs.append(page_record)
+                    finally:
+                        try:
+                            if page is not None and hasattr(page, "close"):
+                                page.close()
+                        except Exception:
+                            pass
+                        try:
+                            doc.close()
+                        except Exception:
+                            pass
+                except BaseException as e:
+                    page_span.set(failed=True)
+                    report_error("pdf_extraction:page_processing", e)
+                    err = _error_record(
+                        source_path=str(pdf_path) if pdf_path is not None else None,
+                        stage="page_processing",
+                        exc=e,
+                        page_number=page_number,
+                        dpi=dpi,
+                    )
+                    err.update(extra)
+                    outputs.append(err)
 
         # Return a batch-shaped dataframe so Ray Data produces one output row per input page.
         return pd.DataFrame(outputs)

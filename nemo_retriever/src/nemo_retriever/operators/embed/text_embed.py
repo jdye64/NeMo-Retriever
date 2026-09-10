@@ -20,6 +20,7 @@ import time
 import traceback
 
 import pandas as pd
+from nemo_retriever.common.tracing import page_index, trace_span
 from nemo_retriever.operators.abstract_operator import AbstractOperator
 from nemo_retriever.graph.designer import designer_component
 from nemo_retriever.operators.gpu_operator import GPUOperator
@@ -124,6 +125,7 @@ def embed_text_1b_v2(
         return out0
 
     # Run inference in chunks.
+    pages = page_index(batch_df)
     for start in range(0, len(texts), int(inference_batch_size)):
         chunk_texts = texts[start : start + int(inference_batch_size)]
         chunk_idxs = text_row_idxs[start : start + int(inference_batch_size)]
@@ -132,7 +134,14 @@ def embed_text_1b_v2(
 
         t0 = time.perf_counter()
         try:
-            vecs = model.embed(chunk_texts, batch_size=int(inference_batch_size))
+            # One chunk embeds rows from several pages, so its cost is shared.
+            with trace_span(
+                "embed.local_inference",
+                pages=pages.many(chunk_idxs),
+                rows=len(chunk_texts),
+                chars=sum(len(text) for text in chunk_texts),
+            ):
+                vecs = model.embed(chunk_texts, batch_size=int(inference_batch_size))
             elapsed = time.perf_counter() - t0
 
             if torch is not None and isinstance(vecs, torch.Tensor):

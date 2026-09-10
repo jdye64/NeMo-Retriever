@@ -82,6 +82,7 @@ from nemo_retriever.common.input_files import (
     input_type_for_path,
 )
 from nemo_retriever.common.remote_auth import resolve_remote_api_key
+from nemo_retriever.common.tracing import PipelineTrace
 from nemo_retriever.common.ray_runtime import ensure_local_ray_runtime
 from nemo_retriever.common.ray_resource_hueristics import gather_cluster_resources
 from nemo_retriever.common.stage_errors import (
@@ -497,6 +498,9 @@ class GraphIngestor(ingestor):
         self._rd_dataset: Any = None
         self._buffers: list[tuple[str, BytesIO]] = []
         self._inline_texts: list[str] | None = None
+        # Span payload for the most recent ``ingest(return_traces=True)`` run.
+        self.last_trace: PipelineTrace | None = None
+        self._trace: PipelineTrace | None = None
 
         # Pipeline configuration accumulated by fluent methods
         self._extraction_mode: str | None = None
@@ -762,10 +766,12 @@ class GraphIngestor(ingestor):
         ----------
         params
             Optional :class:`IngestExecuteParams` (or plain ``dict``) carrying
-            execute-time flags. Graph run modes honor ``return_failures``.
+            execute-time flags. Graph run modes honor ``return_failures`` and
+            ``return_traces``.
         **kwargs
-            Execute-time flags passed directly. ``return_failures`` may be
-            passed here and takes precedence over the value in ``params``.
+            Execute-time flags passed directly. ``return_failures`` and
+            ``return_traces`` may be passed here and take precedence over the
+            values in ``params``.
         return_failures
             When ``True`` (default ``False``), return ``(result, failures)``
             instead of raising collected row-level stage errors. If no explicit
@@ -773,6 +779,13 @@ class GraphIngestor(ingestor):
             scanned for populated error fields so local collected failures can
             still be returned; the default raise path remains scoped to
             explicitly configured remote stages.
+        return_traces
+            When ``True`` (default ``False``) and ``run_mode='inprocess'``,
+            collect per-stage and per-page spans plus page characteristics and
+            return them alongside the result. The payload is also cached on
+            ``self.last_trace``. ``run_mode='batch'`` distributes stages across
+            Ray actors and cannot collect in-process spans, so it returns an
+            empty trace carrying an explanatory note.
 
         Returns
         -------
@@ -781,8 +794,14 @@ class GraphIngestor(ingestor):
         ``return_failures=True``
             ``(result, failures)`` where ``failures`` is a list of
             service-style ``(source, error)`` tuples.
+        ``return_traces=True``
+            ``(result, trace)`` where ``trace`` is a
+            :class:`~nemo_retriever.common.tracing.PipelineTrace`. With both
+            flags — ``(result, failures, trace)``.
         """
         return_failures = self._resolve_return_failures(params, kwargs)
+        return_traces = self._resolve_return_traces(params, kwargs)
+        self._begin_trace(return_traces)
         self._validate_input_sources(self._inline_texts)
         if not self._documents and not self._buffers and is_blank_inline_corpus(self._inline_texts):
             result = empty_text_chunks_df()
@@ -790,7 +809,11 @@ class GraphIngestor(ingestor):
                 self._rd_dataset = result
             else:
                 self._rd_dataset = None
-            return self._finalize_ingest_result(result, return_failures=return_failures)
+            return self._finalize_ingest_result(
+                result,
+                return_failures=return_failures,
+                return_traces=return_traces,
+            )
 
         default_branches = self._plan_default_extraction_branches()
         execute_branches = default_branches is not None and (
@@ -825,7 +848,11 @@ class GraphIngestor(ingestor):
                 raise RuntimeError("Internal error: extraction inputs were not resolved.")
             result = self._execute_single_graph(single_effective, post_extract_order=post_extract_order)
 
-        return self._finalize_ingest_result(result, return_failures=return_failures)
+        return self._finalize_ingest_result(
+            result,
+            return_failures=return_failures,
+            return_traces=return_traces,
+        )
 
     def _execute_single_graph(
         self,
@@ -920,7 +947,7 @@ class GraphIngestor(ingestor):
             webhook_params=self._webhook_params,
             stage_order=post_extract_order,
         )
-        executor = InprocessExecutor(graph, show_progress=self._show_progress)
+        executor = InprocessExecutor(graph, show_progress=self._show_progress, trace=self._trace)
         self._rd_dataset = None
         if self._inline_texts:
             return executor.ingest(self._inline_text_dataframe())
@@ -967,6 +994,7 @@ class GraphIngestor(ingestor):
             show_progress=self._show_progress,
             allow_no_gpu=self._allow_no_gpu,
             ensure_batch_runtime=self._ensure_batch_runtime,
+            trace=self._trace,
         ).execute()
         self._rd_dataset = result if self._run_mode == "batch" else None
         return result
@@ -1345,6 +1373,30 @@ class GraphIngestor(ingestor):
             return bool(params["return_failures"])
         return False
 
+    @staticmethod
+    def _resolve_return_traces(params: Any, kwargs: dict[str, Any]) -> bool:
+        if "return_traces" in kwargs:
+            return bool(kwargs["return_traces"])
+        if isinstance(params, IngestExecuteParams):
+            return bool(params.return_traces)
+        if isinstance(params, dict) and "return_traces" in params:
+            return bool(params["return_traces"])
+        return False
+
+    def _begin_trace(self, return_traces: bool) -> None:
+        """Create the span payload for this run, or clear it when unused."""
+        if not return_traces:
+            self._trace = None
+            return
+        trace = PipelineTrace(run_mode=self._run_mode)
+        if self._run_mode != "inprocess":
+            trace.note(
+                f"run_mode={self._run_mode!r} executes stages in Ray actors; "
+                "per-page spans are only collected for run_mode='inprocess'."
+            )
+        self._trace = trace
+        self.last_trace = trace
+
     def _collect_failure_records(self, result: Any) -> list[dict[str, Any]]:
         diagnostics = self._remote_stage_diagnostics()
         # With explicit remote stages, report only their diagnostic columns.
@@ -1356,9 +1408,23 @@ class GraphIngestor(ingestor):
     def _collect_failure_tuples(self, result: Any) -> list[tuple[str, str]]:
         return [self._public_failure_tuple(record) for record in self._collect_failure_records(result)]
 
-    def _finalize_ingest_result(self, result: Any, *, return_failures: bool) -> Any:
+    def _finalize_ingest_result(
+        self,
+        result: Any,
+        *,
+        return_failures: bool,
+        return_traces: bool = False,
+    ) -> Any:
+        trace = self._trace
+        if trace is not None:
+            trace.finish()
+        if return_failures and return_traces:
+            return result, self._collect_failure_tuples(result), trace
         if return_failures:
             return result, self._collect_failure_tuples(result)
+        if return_traces:
+            self._raise_for_stage_errors(result)
+            return result, trace
         self._raise_for_stage_errors(result)
         return result
 

@@ -39,6 +39,7 @@ from nemo_retriever.common.input_files import (
     expand_input_file_patterns,
     resolve_input_files,
 )
+from nemo_retriever.common.tracing import resolve_trace_dir
 from nemo_retriever.ingest.index_mode import (
     RequestedIngestIndexMode,
     inspect_existing_lancedb_mode,
@@ -89,6 +90,8 @@ class IngestRuntimeOptions:
     run_mode: IngestRunModeValue = "inprocess"
     ray_address: str | None = None
     ray_log_to_driver: bool | None = None
+    save_traces: bool = False
+    trace_dir: str | None = None
 
 
 @dataclass(frozen=True)
@@ -313,6 +316,8 @@ class ResolvedIngestPlan:
     lancedb_uri: str
     table_name: str
     sparse: bool = False
+    #: Directory for this job's saved trace, or ``None`` to not save one.
+    trace_dir: str | None = None
 
     def extract_call_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {}
@@ -579,6 +584,22 @@ def _split_config_for_families(
     return split_config or None
 
 
+def _resolve_trace_dir_option(runtime: IngestRuntimeOptions) -> str | None:
+    """Return the directory this job saves its trace to, or ``None``.
+
+    Naming a directory is itself a request to save, so ``--trace-dir`` works
+    without ``--save-traces``.
+    """
+    if not runtime.save_traces and runtime.trace_dir is None:
+        return None
+    if runtime.run_mode != "inprocess":
+        raise ValueError(
+            "Saving ingest traces requires `retriever ingest local`; "
+            f"run_mode={runtime.run_mode!r} runs stages in Ray actors, which collects no per-page spans."
+        )
+    return str(resolve_trace_dir(runtime.trace_dir))
+
+
 def resolve_ingest_plan(request: IngestPlanRequest) -> ResolvedIngestPlan:
     """Resolve root ingest options into ordinary params for one extract call.
 
@@ -763,4 +784,5 @@ def resolve_ingest_plan(request: IngestPlanRequest) -> ResolvedIngestPlan:
         lancedb_uri=storage.lancedb_uri,
         table_name=storage.table_name,
         sparse=resolved_index_mode == "sparse",
+        trace_dir=_resolve_trace_dir_option(runtime),
     )

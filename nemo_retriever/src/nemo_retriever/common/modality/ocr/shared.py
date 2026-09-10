@@ -26,6 +26,7 @@ _logger = logging.getLogger(__name__)
 import numpy as np
 import pandas as pd
 from nemo_retriever.common.params import RemoteRetryParams
+from nemo_retriever.common.tracing import PageKey, page_key_from_row, trace_span
 from nemo_retriever.models.nim.nim import NIMClient, invoke_image_inference_batches
 from nemo_retriever.common.modality.table_and_chart import join_table_structure_and_ocr_output
 
@@ -797,6 +798,11 @@ def _remote_crop_shape(crop_b64: str) -> Tuple[int, int]:
         return (0, 0)
 
 
+def _prepared_page_key(prepared: "_PreparedOCRRow") -> PageKey:
+    """Return the traced page key for a prepared OCR row."""
+    return page_key_from_row(prepared.row)
+
+
 def _run_remote_ocr(
     prepared_rows: List[_PreparedOCRRow],
     row_results: List[_OCRRowResult],
@@ -813,51 +819,61 @@ def _run_remote_ocr(
 
     for prepared in prepared_rows:
         row_result = row_results[prepared.row_index]
-        try:
-            crops = _crop_all_from_page(
-                prepared.page_image_b64,
-                prepared.detections,
-                prepared.wanted_labels,
-                as_b64=True,
-            )
-            crop_b64s: List[str] = [crop_b64 for _label, _bbox, crop_b64 in crops]
-            crop_metadata: List[Tuple[str, List[float]]] = [(label_name, bbox) for label_name, bbox, _crop_b64 in crops]
-            if not crop_b64s:
-                continue
+        page = _prepared_page_key(prepared)
+        with trace_span("ocr.page", page=page) as page_span:
+            try:
+                with trace_span("ocr.crop", page=page) as crop_span:
+                    crops = _crop_all_from_page(
+                        prepared.page_image_b64,
+                        prepared.detections,
+                        prepared.wanted_labels,
+                        as_b64=True,
+                    )
+                    crop_span.set(crops=len(crops))
+                crop_b64s: List[str] = [crop_b64 for _label, _bbox, crop_b64 in crops]
+                crop_metadata: List[Tuple[str, List[float]]] = [
+                    (label_name, bbox) for label_name, bbox, _crop_b64 in crops
+                ]
+                page_span.set(crops=len(crop_b64s))
+                if not crop_b64s:
+                    continue
 
-            invoke_kwargs = dict(
-                invoke_url=invoke_url,
-                image_b64_list=crop_b64s,
-                api_key=api_key,
-                timeout_s=float(request_timeout_s),
-                max_batch_size=max_batch_size,
-                max_retries=int(retry.remote_max_retries),
-                max_429_retries=int(retry.remote_max_429_retries),
-            )
-            if nim_client is not None:
-                response_items = nim_client.invoke_image_inference_batches(**invoke_kwargs)
-            else:
-                response_items = invoke_image_inference_batches(
-                    **invoke_kwargs,
-                    max_pool_workers=int(retry.remote_max_pool_workers),
+                invoke_kwargs = dict(
+                    invoke_url=invoke_url,
+                    image_b64_list=crop_b64s,
+                    api_key=api_key,
+                    timeout_s=float(request_timeout_s),
+                    max_batch_size=max_batch_size,
+                    max_retries=int(retry.remote_max_retries),
+                    max_429_retries=int(retry.remote_max_429_retries),
                 )
-            if len(response_items) != len(crop_metadata):
-                raise RuntimeError(f"Expected {len(crop_metadata)} OCR responses, got {len(response_items)}")
+                with trace_span("ocr.remote_invoke", page=page, crops=len(crop_b64s)):
+                    if nim_client is not None:
+                        response_items = nim_client.invoke_image_inference_batches(**invoke_kwargs)
+                    else:
+                        response_items = invoke_image_inference_batches(
+                            **invoke_kwargs,
+                            max_pool_workers=int(retry.remote_max_pool_workers),
+                        )
+                if len(response_items) != len(crop_metadata):
+                    raise RuntimeError(f"Expected {len(crop_metadata)} OCR responses, got {len(response_items)}")
 
-            for index, (label_name, bbox) in enumerate(crop_metadata):
-                preds = _extract_remote_ocr_item(response_items[index])
-                crop_hw = _remote_crop_shape(crop_b64s[index]) if label_name == "table" else (0, 0)
-                _append_ocr_prediction(
-                    row_result,
-                    row=prepared.row,
-                    label_name=label_name,
-                    bbox=bbox,
-                    preds=preds,
-                    crop_hw=crop_hw,
-                    use_table_structure=use_table_structure,
-                )
-        except BaseException as exc:
-            _record_ocr_error(row_result, exc)
+                with trace_span("ocr.parse", page=page, crops=len(crop_metadata)):
+                    for index, (label_name, bbox) in enumerate(crop_metadata):
+                        preds = _extract_remote_ocr_item(response_items[index])
+                        crop_hw = _remote_crop_shape(crop_b64s[index]) if label_name == "table" else (0, 0)
+                        _append_ocr_prediction(
+                            row_result,
+                            row=prepared.row,
+                            label_name=label_name,
+                            bbox=bbox,
+                            preds=preds,
+                            crop_hw=crop_hw,
+                            use_table_structure=use_table_structure,
+                        )
+            except BaseException as exc:
+                page_span.set(failed=True)
+                _record_ocr_error(row_result, exc)
 
 
 def _collect_local_crop_jobs(
@@ -868,25 +884,28 @@ def _collect_local_crop_jobs(
 
     jobs_by_merge_level: Dict[str, List[_OCRCropJob]] = {"word": [], "paragraph": []}
     for prepared in prepared_rows:
-        try:
-            crops = _crop_all_from_page(
-                prepared.page_image_b64,
-                prepared.detections,
-                prepared.wanted_labels,
-            )
-            for label_name, bbox, crop_array in crops:
-                merge_level = "word" if label_name == "table" else "paragraph"
-                jobs_by_merge_level[merge_level].append(
-                    _OCRCropJob(
-                        row_index=prepared.row_index,
-                        row=prepared.row,
-                        label_name=label_name,
-                        bbox=bbox,
-                        crop_array=crop_array,
-                    )
+        with trace_span("ocr.crop", page=_prepared_page_key(prepared)) as crop_span:
+            try:
+                crops = _crop_all_from_page(
+                    prepared.page_image_b64,
+                    prepared.detections,
+                    prepared.wanted_labels,
                 )
-        except BaseException as exc:
-            _record_ocr_error(row_results[prepared.row_index], exc)
+                crop_span.set(crops=len(crops))
+                for label_name, bbox, crop_array in crops:
+                    merge_level = "word" if label_name == "table" else "paragraph"
+                    jobs_by_merge_level[merge_level].append(
+                        _OCRCropJob(
+                            row_index=prepared.row_index,
+                            row=prepared.row,
+                            label_name=label_name,
+                            bbox=bbox,
+                            crop_array=crop_array,
+                        )
+                    )
+            except BaseException as exc:
+                crop_span.set(failed=True)
+                _record_ocr_error(row_results[prepared.row_index], exc)
     return jobs_by_merge_level
 
 
@@ -904,16 +923,43 @@ def _run_local_ocr_batches(
         for start in range(0, len(jobs), batch_size):
             batch_jobs = jobs[start : start + batch_size]
             batch_crops = [job.crop_array for job in batch_jobs]
+            # A local batch mixes crops from several pages, so the span carries
+            # every page it touched and rollups split its cost between them.
+            batch_pages = tuple(dict.fromkeys(page_key_from_row(job.row) for job in batch_jobs))
 
-            try:
-                batch_preds = model.invoke(batch_crops, merge_level=merge_level)
-            except Exception:
-                batch_preds = None
+            with trace_span(
+                "ocr.local_inference",
+                pages=batch_pages,
+                merge_level=merge_level,
+                crops=len(batch_crops),
+            ):
+                try:
+                    batch_preds = model.invoke(batch_crops, merge_level=merge_level)
+                except Exception:
+                    batch_preds = None
 
             if not isinstance(batch_preds, list) or len(batch_preds) != len(batch_jobs):
                 for job in batch_jobs:
+                    job_page = page_key_from_row(job.row)
+                    with trace_span("ocr.local_inference_per_crop", page=job_page, merge_level=merge_level):
+                        try:
+                            preds = model.invoke(job.crop_array, merge_level=merge_level)
+                            _append_ocr_prediction(
+                                row_results[job.row_index],
+                                row=job.row,
+                                label_name=job.label_name,
+                                bbox=job.bbox,
+                                preds=preds,
+                                crop_hw=(job.crop_array.shape[0], job.crop_array.shape[1]),
+                                use_table_structure=use_table_structure,
+                            )
+                        except BaseException as exc:
+                            _record_ocr_error(row_results[job.row_index], exc)
+                continue
+
+            with trace_span("ocr.parse", pages=batch_pages, crops=len(batch_jobs)):
+                for job, preds in zip(batch_jobs, batch_preds):
                     try:
-                        preds = model.invoke(job.crop_array, merge_level=merge_level)
                         _append_ocr_prediction(
                             row_results[job.row_index],
                             row=job.row,
@@ -925,21 +971,6 @@ def _run_local_ocr_batches(
                         )
                     except BaseException as exc:
                         _record_ocr_error(row_results[job.row_index], exc)
-                continue
-
-            for job, preds in zip(batch_jobs, batch_preds):
-                try:
-                    _append_ocr_prediction(
-                        row_results[job.row_index],
-                        row=job.row,
-                        label_name=job.label_name,
-                        bbox=job.bbox,
-                        preds=preds,
-                        crop_hw=(job.crop_array.shape[0], job.crop_array.shape[1]),
-                        use_table_structure=use_table_structure,
-                    )
-                except BaseException as exc:
-                    _record_ocr_error(row_results[job.row_index], exc)
 
 
 def _build_ocr_page_elements_output(

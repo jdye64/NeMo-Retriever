@@ -104,6 +104,8 @@ def _build_runtime_options(values: Mapping[str, Any], *, run_mode: IngestRunMode
         run_mode=run_mode,
         ray_address=values.get("ray_address"),
         ray_log_to_driver=values.get("ray_log_to_driver"),
+        save_traces=bool(values.get("save_traces")),
+        trace_dir=values.get("trace_dir"),
     )
 
 
@@ -224,6 +226,8 @@ def _graph_ingest_command(
     store_images_uri: opts.StoreImagesUriOption = None,
     overwrite: opts.OverwriteOption = True,
     index_mode: opts.IndexModeOption = "auto",
+    save_traces: opts.SaveTracesOption = False,
+    trace_dir: opts.TraceDirOption = None,
     ray_address: opts.RayAddressOption = None,
     ray_log_to_driver: opts.RayLogToDriverOption = None,
     page_elements_invoke_url: opts.PageElementsInvokeUrlOption = None,

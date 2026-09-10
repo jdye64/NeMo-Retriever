@@ -31,6 +31,12 @@ from nemo_retriever.common.ray_resource_hueristics import (
     VLLM_GPUS_PER_ACTOR,
     OCR_GPUS_PER_ACTOR,
 )
+from nemo_retriever.common.tracing import (
+    PipelineTrace,
+    activate_trace,
+    observe_frame,
+    stage_span,
+)
 
 import logging
 
@@ -39,6 +45,17 @@ logger = logging.getLogger(__name__)
 # Heuristic GPU fraction for GPUOperator nodes that load a local model.
 # Reuses the same baseline constant as the batch ingest mode.
 _DEFAULT_GPU_OPERATOR_NUM_GPUS = OCR_GPUS_PER_ACTOR
+
+
+def _frame_row_count(data: Any) -> int | None:
+    """Return a frame's row count, or ``None`` for non-frame stage output."""
+    index = getattr(data, "index", None)
+    if index is None:
+        return len(data) if isinstance(data, (list, tuple)) else None
+    try:
+        return int(len(index))
+    except TypeError:
+        return None
 
 
 def _contains_null_arrow_child(data_type: Any) -> bool:
@@ -308,9 +325,16 @@ class InprocessExecutor(AbstractExecutor):
     Only linear (single-root, no fan-out) graphs are currently supported.
     """
 
-    def __init__(self, graph: Graph, *, show_progress: bool = True) -> None:
+    def __init__(
+        self,
+        graph: Graph,
+        *,
+        show_progress: bool = True,
+        trace: PipelineTrace | None = None,
+    ) -> None:
         super().__init__(graph)
         self._show_progress = show_progress
+        self._trace = trace
 
     @staticmethod
     def _linearize(graph: Graph) -> List[Node]:
@@ -346,6 +370,15 @@ class InprocessExecutor(AbstractExecutor):
         -------
         pandas.DataFrame
             The result after all operators have been applied.
+
+        Notes
+        -----
+        When the executor was constructed with a
+        :class:`~nemo_retriever.common.tracing.PipelineTrace`, each stage is
+        wrapped in a span and each intermediate frame is inspected for page
+        characteristics. Instrumented operators add nested per-page spans by
+        reading the trace from its ambient handle, so no operator signature
+        changes when tracing is enabled.
         """
         import pandas as pd
 
@@ -370,16 +403,29 @@ class InprocessExecutor(AbstractExecutor):
         except ImportError:
             tqdm = None
 
-        if self._show_progress and tqdm is not None:
-            pbar = tqdm(operators, desc="Pipeline stages", unit="stage")
-            for name, op in pbar:
-                pbar.set_postfix_str(name)
-                df = op.run(df)
-        else:
-            for _name, op in operators:
-                df = op.run(df)
+        with activate_trace(self._trace):
+            pages = observe_frame(df)
+            if self._show_progress and tqdm is not None:
+                pbar = tqdm(operators, desc="Pipeline stages", unit="stage")
+                for name, op in pbar:
+                    pbar.set_postfix_str(name)
+                    df, pages = self._run_stage(name, op, df, pages)
+            else:
+                for name, op in operators:
+                    df, pages = self._run_stage(name, op, df, pages)
 
         return df
+
+    @staticmethod
+    def _run_stage(name: str, op: Any, df: Any, pages: tuple[Any, ...]) -> tuple[Any, tuple[Any, ...]]:
+        """Run one stage under a span and describe the frame it produced."""
+        with stage_span(name, operator=type(op).__name__, rows_in=_frame_row_count(df)) as span:
+            span.add_pages(pages)
+            result = op.run(df)
+        # Observed outside the span so schema inspection is not billed to the stage.
+        observed = observe_frame(result, stage=name)
+        span.set(rows_out=_frame_row_count(result)).add_pages(observed)
+        return result, observed
 
     @staticmethod
     def _load_files(paths: List[str]) -> "pd.DataFrame":
