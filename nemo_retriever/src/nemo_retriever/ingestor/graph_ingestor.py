@@ -783,7 +783,8 @@ class GraphIngestor(ingestor):
             When ``True`` (default ``False``) and ``run_mode='inprocess'``,
             collect per-stage and per-page spans plus page characteristics and
             return them alongside the result. The payload is also cached on
-            ``self.last_trace``. ``run_mode='batch'`` distributes stages across
+            ``self.last_trace``, which is ``None`` when the most recent run did
+            not request a trace. ``run_mode='batch'`` distributes stages across
             Ray actors and cannot collect in-process spans, so it returns an
             empty trace carrying an explanatory note.
 
@@ -1384,9 +1385,14 @@ class GraphIngestor(ingestor):
         return False
 
     def _begin_trace(self, return_traces: bool) -> None:
-        """Create the span payload for this run, or clear it when unused."""
+        """Create the span payload for this run, or clear it when unused.
+
+        ``last_trace`` is cleared for an untraced run so it always describes
+        the most recent run rather than silently holding an earlier one.
+        """
         if not return_traces:
             self._trace = None
+            self.last_trace = None
             return
         trace = PipelineTrace(run_mode=self._run_mode)
         if self._run_mode != "inprocess":

@@ -133,7 +133,7 @@ ingestor = create_ingestor(run_mode="inprocess").files(["data/multimodal_test.pd
 result, trace = ingestor.ingest(IngestExecuteParams(return_traces=True))
 ```
 
-The library caches the most recent requested trace on `ingestor.last_trace`, so code that does not unpack the tuple can still reach the payload. The attribute is `None` until a run requests a trace.
+The library caches the trace on `ingestor.last_trace`, so code that does not unpack the tuple can still reach the payload. The attribute always describes the most recent run, and it is `None` when that run did not request a trace.
 
 Three attributes give you the raw material behind the rollups. `trace.total_s` is the wall-clock duration of the run in seconds. `trace.spans` is the tuple of recorded spans. `trace.notes` lists caveats that the library recorded about the run, and `trace.note(message)` appends your own, which is useful for labeling the configuration you tested.
 

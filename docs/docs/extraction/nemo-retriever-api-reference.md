@@ -344,9 +344,9 @@ as follows.
 per-stage and per-page spans plus page characteristics for
 `run_mode="inprocess"`. Because `run_mode="batch"` runs stages in Ray actors,
 it returns an empty trace that carries an explanatory note in `trace.notes`.
-The library also caches the most recent requested trace on
-`ingestor.last_trace`, which is `None` until a run requests one. For the
-collection workflow and the reporting methods, refer to
+The library also caches the trace on `ingestor.last_trace`, which always
+describes the most recent run and is `None` when that run did not request a
+trace. For the collection workflow and the reporting methods, refer to
 [Per-page profiling with pipeline traces](performance_guide.md#pipeline-traces).
 
 ::: nemo_retriever.ingestor.graph_ingestor.GraphIngestor

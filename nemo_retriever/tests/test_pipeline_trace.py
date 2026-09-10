@@ -778,6 +778,18 @@ def test_ingest_with_return_traces_returns_the_trace(monkeypatch: pytest.MonkeyP
     assert ingestor.last_trace is trace
 
 
+def test_an_untraced_run_clears_the_cached_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``last_trace`` describes the most recent run, never an earlier one."""
+    ingestor = GraphIngestor(run_mode="inprocess", show_progress=False).extract(ExtractParams(extract_text=True))
+    frame = pd.DataFrame([{"path": "a.pdf"}])
+
+    _result, trace = _run_graph_ingest_with_result(ingestor, frame, monkeypatch, return_traces=True)
+    assert ingestor.last_trace is trace
+
+    _run_graph_ingest_with_result(ingestor, frame, monkeypatch)
+    assert ingestor.last_trace is None
+
+
 def test_ingest_with_both_flags_returns_result_failures_and_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     ingestor = GraphIngestor(run_mode="inprocess", show_progress=False).extract(ExtractParams(extract_text=True))
     result, failures, trace = _run_graph_ingest_with_result(
