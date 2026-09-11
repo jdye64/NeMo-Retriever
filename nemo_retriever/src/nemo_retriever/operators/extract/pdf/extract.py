@@ -5,20 +5,20 @@
 from __future__ import annotations
 
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import base64
 import traceback
 
-try:
-    import cv2
-except ImportError:
-    cv2 = None
-
+from nemo_retriever.common.api.util.pdf.engine import RenderMode
 from nemo_retriever.common.api.util.pdf.pdfium import (
-    convert_bitmap_to_corrected_numpy,
     extract_image_like_objects_from_pdfium_page,
     is_scanned_page as _is_scanned_page,
+)
+from nemo_retriever.common.api.util.pdf.render import (
+    MODEL_INPUT_SIZE,
+    compute_page_render_scale,
+    render_pdfium_page_cpu,
 )
 
 import pandas as pd
@@ -46,10 +46,7 @@ except Exception:  # pragma: no cover
     np = None  # type: ignore[assignment]
 
 # Default model input size used by `nemo_retriever.api` for page-element detection.
-_MODEL_INPUT_SIZE: Tuple[int, int] = (1024, 1024)
-
-# Allowed render-mode values.
-RenderMode = Literal["full_dpi", "fit_to_model"]
+_MODEL_INPUT_SIZE: Tuple[int, int] = MODEL_INPUT_SIZE
 
 
 def build_pdf_extraction_kwargs(params: ExtractParams) -> dict[str, Any]:
@@ -91,15 +88,12 @@ def _compute_fit_to_model_scale(
     For a US-Letter page (612×792 pt) fitting into 1024×1024 the result is
     ``min(300/72, min(1024/612, 1024/792)) ≈ 1.293`` → ~93 effective DPI.
     """
-    target_w, target_h = target_wh
-    page_w = float(page.get_width())
-    page_h = float(page.get_height())
-    if page_w <= 0 or page_h <= 0 or target_w <= 0 or target_h <= 0:
-        return max(float(max_dpi) / 72.0, 0.01)
-
-    fit_scale = max(min(target_w / page_w, target_h / page_h), 1e-3)
-    base_scale = max(float(max_dpi) / 72.0, 0.01)
-    return min(base_scale, fit_scale)
+    return compute_page_render_scale(
+        page,
+        dpi=max_dpi,
+        render_mode="fit_to_model",
+        target_wh=target_wh,
+    )
 
 
 def _render_page_to_base64(
@@ -125,53 +119,22 @@ def _render_page_to_base64(
     - encoding: str ("jpeg" or "png")
     - orig_shape_hw: tuple[int,int] (H,W) of the rendered raster
     """
-    if render_mode == "fit_to_model":
-        render_scale = _compute_fit_to_model_scale(page, _MODEL_INPUT_SIZE, max_dpi=dpi)
-    else:
-        render_scale = max(float(dpi) / 72.0, 0.01)
-    bitmap = page.render(scale=render_scale)
-
-    arr = convert_bitmap_to_corrected_numpy(bitmap)
-
-    orig_h, orig_w = int(arr.shape[0]), int(arr.shape[1])
-
-    # Strip alpha channel (RGBA→RGB) for JPEG compatibility.
-    if arr.ndim == 3 and arr.shape[2] == 4:
-        arr = arr[:, :, :3]
-
-    # Encode.
-    from io import BytesIO
-    from PIL import Image as _PILImage
-
     fmt = image_format.lower()
-    if cv2 is not None:
-        if fmt == "jpeg":
-            bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-            ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, int(jpeg_quality)])
-            if not ok:
-                raise RuntimeError("cv2.imencode failed for JPEG")
-            encoded_bytes = buf.tobytes()
-        else:
-            bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-            ok, buf = cv2.imencode(".png", bgr, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-            if not ok:
-                raise RuntimeError("cv2.imencode failed for PNG")
-            encoded_bytes = buf.tobytes()
-    else:
-        # PIL fallback when opencv-python is not installed (e.g. Intel Mac slim install).
-        pil_img = _PILImage.fromarray(arr)
-        buf = BytesIO()
-        if fmt == "jpeg":
-            pil_img = pil_img.convert("RGB")
-            pil_img.save(buf, format="JPEG", quality=int(jpeg_quality))
-        else:
-            pil_img.save(buf, format="PNG", compress_level=3)
-        encoded_bytes = buf.getvalue()
-
+    if fmt not in {"jpeg", "png"}:
+        raise ValueError(f"Unsupported image_format: {image_format!r}")
+    _arr, encoded_bytes, encoding, orig_shape_hw = render_pdfium_page_cpu(
+        page,
+        dpi=dpi,
+        render_mode=render_mode,
+        image_format=fmt,  # type: ignore[arg-type]
+        jpeg_quality=jpeg_quality,
+        encode=True,
+    )
+    assert encoded_bytes is not None
     return {
         "image_b64": base64.b64encode(encoded_bytes).decode("ascii"),
-        "encoding": fmt,
-        "orig_shape_hw": (orig_h, orig_w),
+        "encoding": encoding,
+        "orig_shape_hw": orig_shape_hw,
     }
 
 

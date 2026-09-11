@@ -12,6 +12,7 @@ from nemo_retriever.tools.benchmark import (
     extract_actor,
     ocr_actor,
     page_elements_actor,
+    pdf_engine,
     split_actor,
 )
 
@@ -22,6 +23,7 @@ app.add_typer(audio_extract_actor.app, name="audio-extract")
 app.add_typer(page_elements_actor.app, name="page-elements")
 app.add_typer(ocr_actor.app, name="ocr")
 app.add_typer(all_actor.app, name="all")
+app.add_typer(pdf_engine.app, name="pdf-engine")
 
 
 def main() -> None:

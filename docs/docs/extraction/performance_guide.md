@@ -81,3 +81,45 @@ preflight_executors([file_executor, inline_executor], cluster_resources)
 ```
 
 The shared preflight records these reservations. NeMo Retriever Library rejects a later filesystem input when its executor lacks the required reservation. It rejects the input before it starts Ray work. Construct a new executor with `source_cpu_reservation=1`, and include it in a new shared preflight instead.
+
+## Compare CPU and GPU PDF raster engines
+
+Use `PDFEngine` when you want a small interface for PDF load, page geometry, and
+page rasters. `CpuPDFEngine` uses PDFium for every step, matching the current
+`pdf_extraction` raster path. `GpuPDFEngine` uses PDFium for document load, page
+information, and the CPU bitmap, then rasterizes JPEG on the GPU and keeps the
+CHW uint8 tensors on device for a later page-elements model invoke.
+
+The following example loads one PDF and prints raster bytes and dimensions:
+
+```python
+from pathlib import Path
+
+from nemo_retriever.common.api.util.pdf import create_pdf_engine
+
+pdf_path = Path("data/multimodal_test.pdf")
+
+with create_pdf_engine("cpu") as engine:
+    engine.load(pdf_path)
+    print(engine.page_count())
+    page = engine.page_info(0)
+    print(page.width_pt, page.height_pt)
+    image = engine.rasterize_page(0, dpi=200, render_mode="fit_to_model")
+    print(image.width, image.height, image.nbytes, image.encoding)
+```
+
+To compare engines on a directory of PDFs, run the following command. Replace
+`/path/to/your/pdfs` with a directory of PDF files that you supply.
+
+```bash
+retriever benchmark pdf-engine run \
+  --input-dir /path/to/your/pdfs \
+  --backends cpu,gpu \
+  --output-json /tmp/pdf-engine-bench.json
+```
+
+The JSON summary includes per-backend load, info, and raster times, pages per
+second, encoded bytes, and per-file rows that you can share with your team.
+The GPU path requires `torch`. CUDA is used when it is available. Without CUDA
+the GPU engine still runs the torch conversion path on CPU so you can validate
+the interface.
