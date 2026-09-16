@@ -73,6 +73,7 @@ def test_root_help_lists_only_product_workflows() -> None:
     assert result.exit_code == 0
     assert "service" in result.output
     assert "ingest" in result.output
+    assert "inspect" in result.output
     assert "query" in result.output
     assert "harness" in result.output
     for developer_command in (

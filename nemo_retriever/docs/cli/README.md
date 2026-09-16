@@ -6,6 +6,7 @@ ingest and retrieval.
 For product-facing examples, prefer these commands:
 
 - `retriever ingest` - ingest supported documents and media into a Retriever index.
+- `retriever inspect` - browse a local LanceDB table written by local or batch ingest.
 - `retriever query` - query a local LanceDB table written by local or batch ingest.
 - `retriever query service` - query a Retriever service deployment.
 - `retriever service` - operate a Retriever service deployment.
@@ -71,16 +72,22 @@ first-run input. If you installed from PyPI, pass a PDF file that you supply.
 retriever ingest ./data/multimodal_test.pdf
 ```
 
-Then query the default LanceDB table:
+Then inspect what ingest wrote, and query the default LanceDB table:
 
 ```bash
+retriever inspect
+retriever inspect --format html --open
 retriever query "What is in this document?"
 ```
 
+`retriever inspect` prints document, page, and content-type counts for the
+default table. `--format html --open` writes a searchable gallery and opens it
+in your browser.
+
 By default, local ingest auto-detects supported input formats and writes to
-`lancedb/nemo-retriever`; `retriever query` reads from the same table. Use
-explicit high-level options when a task needs behavior beyond the current ingest
-defaults.
+`lancedb/nemo-retriever`; `retriever inspect` and `retriever query` read from
+the same table. Use explicit high-level options when a task needs behavior
+beyond the current ingest defaults.
 
 Python `.vdb_upload()` and default `Retriever()` use the same table.
 
@@ -178,6 +185,32 @@ retriever query "What is in this document?" \
 
 Passing `--rerank` without `--reranker-invoke-url` uses the local GPU reranker,
 not this hosted endpoint.
+
+### Inspect a local index
+
+After local or batch ingest, browse the same LanceDB table that `retriever query`
+reads. The default command prints document, page, and content-type counts plus a
+short chunk preview:
+
+```bash
+retriever inspect
+retriever inspect --lancedb-uri ./my-lancedb --table-name my-corpus
+```
+
+`--format json` prints the same summary as JSON. `--format html --open` writes a
+searchable gallery and opens it in your default browser. Use `--output` to keep
+the HTML file:
+
+```bash
+retriever inspect --format html --open
+retriever inspect --format html --output ./corpus.html
+retriever inspect --list-tables
+```
+
+`retriever inspect` reads stored text and metadata only. It does not run
+embedding or retrieval. Match `--lancedb-uri` and `--table-name` to the values
+you used for ingest. From Python, call
+`nemo_retriever.inspect.summarize_index` for the same summary object.
 
 A Cohere-style `/v1/rerank` URL is a gateway route, not an NVIDIA-hosted NIM
 endpoint. Pass the full URL that your gateway exposes, for example
@@ -431,6 +464,12 @@ retriever ingest ./data/multimodal_test.pdf \
 ```
 
 ```bash
+retriever inspect \
+  --lancedb-uri ./my-lancedb \
+  --table-name my-corpus
+```
+
+```bash
 retriever query "What is in this document?" \
   --lancedb-uri ./my-lancedb \
   --table-name my-corpus
@@ -591,6 +630,9 @@ Local and batch ingest report the number of input files and LanceDB rows written
 ```text
 Ingested 20 file(s) -> 1884 row(s) in LanceDB lancedb/nemo-retriever.
 ```
+
+Run `retriever inspect` on the same URI and table to confirm documents, pages,
+and content types before you query.
 
 Service ingest reports the row count returned by the service result when
 available:
