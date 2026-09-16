@@ -10,6 +10,7 @@ import logging
 import typer
 
 from nemo_retriever.cli.ingest import app as ingest_app
+from nemo_retriever.cli.inspect import inspect_command
 from nemo_retriever.cli.query import app as query_app
 from nemo_retriever.version import get_version_info
 
@@ -17,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     help=(
-        "NeMo Retriever product workflows: ingest content, query an index, "
-        "run benchmark harnesses, or operate the service."
+        "NeMo Retriever product workflows: ingest content, inspect an index, "
+        "query an index, run benchmark harnesses, or operate the service."
     )
 )
 
@@ -27,6 +28,10 @@ from nemo_retriever.service.cli import app as service_app  # noqa: E402
 
 app.add_typer(service_app, name="service")
 app.add_typer(ingest_app, name="ingest")
+app.command(
+    "inspect",
+    help="Browse a local LanceDB index produced by retriever ingest.",
+)(inspect_command)
 app.add_typer(query_app, name="query")
 
 # Keep compatibility commands callable while hiding them from the product help
