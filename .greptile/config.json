@@ -113,12 +113,7 @@
       "scope": ["api/**/*.py", "client/**/*.py", "nemo_retriever/src/**/*.py"],
       "severity": "medium"
     },
-    {
-      "id": "helm-chart-standards",
-      "rule": "Helm templates must use proper value references with defaults, include resource limits/requests for all containers, define health checks (liveness/readiness probes), and use configurable image tags. Hardcoded resource values or missing health checks should be flagged.",
-      "scope": ["helm/**/*.yaml", "helm/**/*.tpl"],
-      "severity": "medium"
-    },
+
     {
       "id": "dockerfile-best-practices",
       "rule": "Dockerfiles must use multi-stage builds, pin base image tags (never 'latest'), run as non-root user in the final stage, never COPY secrets/credentials/env files into the image, and use .dockerignore to exclude test data, docs, and dev files. Flag any ADD or COPY that pulls in sensitive files, or any USER root in a final stage.",
@@ -185,7 +180,6 @@
       "rule": "When this PR changes user-facing code, configuration, examples, or documentation, verify that the affected documentation remains accurate. Compare documented APIs, CLI commands and flags, configuration keys and defaults, supported formats, error behavior, and code examples against the PR's checked-in source and tests. Flag concrete stale, incorrect, contradictory, or missing documentation, and identify the affected page. Do not request documentation for internal-only changes or speculate without a specific mismatch.",
       "scope": [
         "nemo_retriever/src/**",
-        "nemo_retriever/helm/**",
         "nemo_retriever/README.md",
         "nemo_retriever/docs/**",
         "docs/docs/**",

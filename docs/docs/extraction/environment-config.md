@@ -20,17 +20,17 @@ On Windows PowerShell, set the variables in the session, for example `$env:NVIDI
 |----------------------------------|--------------------------------|-----------------------------------------------------------------------|
 | `HF_ACCESS_TOKEN`                | -                                                         | A token for Hugging Face Hub downloads when your runtime needs one. The default chunking tokenizer is public; refer to [Token-based splitting](concepts.md#token-based-splitting) for container caching and offline behavior. |
 | `NVIDIA_API_KEY`                    | `nvapi-*************` <br/>                              | An authorized build.nvidia.com API key, used to interact with NVIDIA-hosted NIMs. Create through build.nvidia.com or through [NGC](https://org.ngc.nvidia.com/setup/api-keys). |
-| `NGC_API_KEY`                | —                                                          | The key that NIM microservices in the cluster use to access NGC resources. |
+| `NGC_API_KEY`                | —                                                          | The key that self-hosted NIM microservices use to access NGC resources. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`    | `http://otel-collector:4317` <br/>                       | The endpoint for the OpenTelemetry exporter, used for sending telemetry data. |
 | `OTEL_METRICS_EXPORTER` | `otlp` | The retriever service metrics exporter. Set to `none` to disable OpenTelemetry metric export while retaining other supported telemetry. |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `5000` | The metric export interval in milliseconds for Helm deployments. Set a larger value to reduce export frequency. |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `5000` | The metric export interval in milliseconds. Set a larger value to reduce export frequency. |
 
 
 ## Retriever Service Log Level { #retriever-service-log-level }
 
 The current Retriever service reads log verbosity from `logging.level`.
 The default is `INFO`.
-`INGEST_LOG_LEVEL` does not control `retriever service start`, the current service container, or Helm.
+`INGEST_LOG_LEVEL` does not control `retriever service start` or the current service container.
 
 The following table lists the supported controls.
 
@@ -38,7 +38,6 @@ The following table lists the supported controls.
 |-----------|---------|-------|
 | CLI | `retriever service start --log-level LEVEL` | Overrides YAML `logging.level`. |
 | YAML | `logging.level` in `retriever-service.yaml` | Bundled default is `INFO`. |
-| Helm | `serviceConfig.logging.level` | Rendered into the service ConfigMap. |
 
 Typical values are `DEBUG`, `INFO`, `WARNING`, `ERROR`, and `CRITICAL`.
 
@@ -55,17 +54,9 @@ logging:
   level: CRITICAL
 ```
 
-The following Helm values set the same level for a chart deployment:
-
-```yaml
-serviceConfig:
-  logging:
-    level: CRITICAL
-```
-
-Setting `INGEST_LOG_LEVEL` in the process environment or in Helm `service.env` does not change `logging.level`.
+Setting `INGEST_LOG_LEVEL` in the process environment does not change `logging.level`.
 That variable remains in the `examples/launch_libmode_*.py` scripts, the legacy `docker/scripts/entrypoint.sh` service entrypoint, and `.devcontainer/devcontainer.json`.
-The current service image and Helm deployment do not use those paths.
+The current service image does not use those paths.
 
 For Ray worker logging, refer to [Configure Ray Logging](ray-logging.md).
 

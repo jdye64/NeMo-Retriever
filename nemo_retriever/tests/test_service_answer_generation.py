@@ -31,7 +31,7 @@ def test_llm_config_defaults_to_reasoning_enabled_for_external_provider_safety()
     assert LLMConfig().reasoning_enabled is True
 
 
-def test_llm_config_allows_empty_model_when_disabled_for_helm_default() -> None:
+def test_llm_config_allows_empty_model_when_disabled() -> None:
     assert LLMConfig(enabled=False, model="").model == ""
 
 

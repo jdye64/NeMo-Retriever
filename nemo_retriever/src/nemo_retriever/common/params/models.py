@@ -321,8 +321,8 @@ class IngestorCreateParams(_ParamsModel):
     api_key: Optional[str] = None
     error_policy: Literal["raise", "collect"] = "raise"
     # service run mode: maximum number of concurrent page uploads.  Lower
-    # values (e.g. 2-4) reduce burst pressure on Kubernetes NodePort /
-    # kube-proxy paths that otherwise reset connections under heavy load.
+    # values (e.g. 2-4) reduce burst pressure on reverse proxies that
+    # otherwise reset connections under heavy load.
     max_concurrency: Optional[int] = None
 
 
@@ -398,7 +398,7 @@ class ASRParams(_ParamsModel):
     audio_endpoints: Tuple[Optional[str], Optional[str]] = (None, None)
     audio_infer_protocol: str = "grpc"
     # ``auto``: streaming (online) for NVCF; offline recognize for other gRPC
-    # endpoints (e.g. Helm Parakeet NIM with ``mode=ofl``).
+    # endpoints (e.g. a self-hosted Parakeet NIM with ``mode=ofl``).
     audio_infer_mode: Literal["auto", "online", "offline"] = "auto"
     function_id: Optional[str] = None
     auth_token: Optional[str] = None

@@ -97,8 +97,8 @@ local_models:
     max_length: 512
     batch_size: 32
 
-# Remote LLM endpoint used by POST /v1/answer. Helm auto-wires these
-# fields when the Super-49B NIM is enabled.
+# Remote LLM endpoint used by POST /v1/answer. Set these fields when you
+# run a Super-49B or other OpenAI-compatible answer NIM.
 llm:
   enabled: false
   model: "openai/nvidia/llama-3.3-nemotron-super-49b-v1.5"
@@ -179,8 +179,8 @@ resources:
   gpu_devices: []
 
 # Gateway backend URLs (only used when mode: gateway).
-# Defaults point at the Kubernetes Services created by the Helm chart
-# when topology.mode is "split".
+# Defaults are example hostnames for split topology. Override them for
+# Docker Compose or host-level deployments.
 gateway:
   realtime_url: "http://nemo-retriever-realtime:7670"
   batch_url: "http://nemo-retriever-batch:7670"

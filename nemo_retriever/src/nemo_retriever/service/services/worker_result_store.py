@@ -17,8 +17,8 @@ The storage protocol intentionally has no claims or reader leases:
 * cleanup unlinks only the exact immutable generation it inspected; and
 * I/O or decode failures preserve the generation and remain retryable.
 
-An in-memory TTL-bounded store provides the same read semantics for local and
-non-Helm deployments that do not configure shared storage.
+An in-memory TTL-bounded store provides the same read semantics for local
+deployments that do not configure shared storage.
 """
 
 from __future__ import annotations

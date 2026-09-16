@@ -1,8 +1,8 @@
 # NeMo Retriever Development Compose Helpers
 
 These files provide a development-only, standalone service deployment. Hosted
-inference remains the zero-profile default. Production deployments and split
-gateway/realtime/batch topology use the [Helm chart](../../helm/README.md).
+inference remains the zero-profile default. Kubernetes Helm charts are no longer
+supported.
 
 Run commands from the repository root. Docker Compose 2.23.1 or newer is
 required for optional dependencies and inline configs.
@@ -104,7 +104,7 @@ The `nim-caption` profile defaults to `nvcr.io/nim/nvidia/nemotron-3-nano-omni-3
 
 Reranker and Parse need only `--profile nim-reranker` or
 `--profile nim-parse`. They are lifecycle/API-only and intentionally are not
-injected into retriever service configuration, matching Helm.
+injected into retriever service configuration.
 
 Every NIM has a persistent model or cache volume, a configurable GPU assignment, and a
 configurable host port. Variables follow the service prefix, for example
@@ -117,8 +117,8 @@ defaults to match the active profiles and host before
 startup; for example, an answer-only run on a two-GPU host can set
 `NIM_ANSWER_GPU_ID_0=0` and `NIM_ANSWER_GPU_ID_1=1`. Compose lifecycle support
 means image pull, startup, readiness, persistent model or cache data, restart, logs, and
-teardown; NIM Operator reconciliation, NIMCache CRDs, and model-profile
-selection remain Kubernetes-only.
+teardown. NIM Operator reconciliation, NIMCache CRDs, and model-profile
+selection are outside this Compose path.
 
 Answer behavior is configurable through `ANSWER_LLM_ENABLED`,
 `ANSWER_LLM_MODEL`, `ANSWER_LLM_API_BASE_YAML`, `ANSWER_LLM_TEMPERATURE`,

@@ -5,7 +5,8 @@
 """OpenTelemetry metrics for Retriever service ingestion.
 
 The service also exposes native Prometheus metrics at ``/metrics``.  This
-module is the complementary OTLP path used by the chart-owned Collector.
+module is the complementary OTLP path used when an OpenTelemetry collector
+is reachable.
 Telemetry setup and recording are deliberately best effort: an unavailable
 collector must never prevent an ingestion request from completing.
 """
@@ -42,7 +43,7 @@ _METRICS: dict[str, Any] = {}
 
 
 def metrics_enabled_from_env(env: Mapping[str, str] | None = None) -> bool:
-    """Return whether Helm-compatible environment enables OTLP metrics."""
+    """Return whether OpenTelemetry environment enables OTLP metrics."""
     source = os.environ if env is None else env
     if source.get("OTEL_SDK_DISABLED", "").strip().lower() == "true":
         return False

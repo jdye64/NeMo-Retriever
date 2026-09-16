@@ -7,13 +7,11 @@ This quick start guide shows how to run NeMo Retriever Library as a library in l
 - **Local GPU (Linux):** Pull and run [Nemotron RAG models from Hugging Face](https://huggingface.co/collections/nvidia/nemotron-rag) on your GPU(s). Requires CUDA 13.x and the `[local]` extra.
 - **Remote NIM:** Call build.nvidia.com hosted or self-hosted NeMo Retriever NIM endpoints over the network. The base package installs on Linux, Windows x64, and macOS Apple Silicon (arm64); no local GPU is required. macOS Intel (x86_64) is not supported.
 
-The steps below cover environment setup, installation, and a first ingestion run. For Kubernetes or container deployments, refer to [Deployment at a glance](#deployment-at-a-glance) and the [Pre-Requisites & Support Matrix](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/).
+The steps below cover environment setup, installation, and a first ingestion run. For container deployments, refer to [Deployment at a glance](#deployment-at-a-glance) and the [Pre-Requisites & Support Matrix](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/).
 
 ## Deployment at a glance
 
-For Kubernetes deployments, use the **[`nemo_retriever/helm` chart](helm/README.md)** to deploy the retriever **service** and optional in-cluster **NIM** workloads. Published Helm install and upgrade flows for the full extraction stack are documented in the **[NeMo Retriever Library](https://docs.nvidia.com/nemo/retriever/latest/extraction/overview/)**; use those docs together with the chart README for your release.
-
-For standalone service-image builds and local container runs, see **[`docker.md`](docker.md)**.
+For standalone service-image builds and local container runs, see **[`docker.md`](docker.md)**. Kubernetes Helm charts are no longer supported.
 
 ## Prerequisites
 
@@ -419,12 +417,11 @@ retriever query "What is RAG?" \
   --table-name nemo-retriever
 ```
 
-The Helm `answer_llm` Super-49B NIM is not tool-call ready by default.
+A self-hosted Super-49B NIM is not tool-call ready by default.
 Add `--enable-auto-tool-choice --tool-call-parser llama3_json` to
 `NIM_PASSTHROUGH_ARGS` before you point `--agentic-invoke-url` at that
 endpoint. Refer to
-[Agentic retrieval (self-hosted Super-49B)](helm/README.md#agentic-retrieval-llm)
-in the Helm chart README.
+[Self-hosted Super-49B](https://docs.nvidia.com/nemo/retriever/latest/extraction/workflow-agentic-retrieval/#self-hosted-super-49b).
 
 Agentic CLI output is not the five-field dense projection (`modality`,
 `page_number`, `score`, `source`, and `text`). Each JSON object is the
@@ -657,7 +654,6 @@ set `INSTALL_FFMPEG=true` at runtime to install them during container startup:
 docker run -e INSTALL_FFMPEG=true nemo-retriever-service
 ```
 
-For Kubernetes deployments, set `service.installFfmpeg=true` in the Helm chart.
 This runtime install requires network access to package repositories, a
 writable root filesystem, and security policy that allows the image's scoped
 sudo use. For locked-down environments that cannot install packages at startup,
@@ -745,7 +741,7 @@ To start a Ray cluster with the dashboard on a single machine use the following 
 ray start --head
 ```
 
-Open `http://127.0.0.1:8265` in your browser for the Ray Dashboard, and run your NeMo Retriever Library pipeline on the same machine with `--ray-address auto` to attach to this cluster. [Connecting to a remote Ray cluster on Kubernetes](https://discuss.ray.io/t/connecting-to-remote-ray-cluster-on-k8s/7460)
+Open `http://127.0.0.1:8265` in your browser for the Ray Dashboard, and run your NeMo Retriever Library pipeline on the same machine with `--ray-address auto` to attach to this cluster.
 
 ### Single‑GPU cluster on multi‑GPU nodes
 
@@ -829,10 +825,7 @@ For source-task CPU reservations and custom Ray Data graphs, refer to the [perfo
 
 ## NIM containers
 
-For deployment of NeMo Retriever / **NIM** containers, use **Helm**:
-**[`helm/README.md`](helm/README.md)** and the **NeMo Retriever Library**
-documentation linked from that guide and the
-[NeMo Retriever Library](https://docs.nvidia.com/nemo/retriever/latest/extraction/overview/).
+For deployment of NeMo Retriever / **NIM** containers, use the Docker service image in **[`docker.md`](docker.md)** and the **[NeMo Retriever Library](https://docs.nvidia.com/nemo/retriever/latest/extraction/overview/)** documentation. Kubernetes Helm charts are no longer supported.
 
 ## Troubleshooting
 
@@ -864,7 +857,7 @@ After installing the headers, restart the pipeline.
 End-to-end Retriever experiments and benchmark orchestration are maintained in
 the [NeMo Retriever Benchmark (NRB) repository](https://gitlab-master.nvidia.com/charlesb/nemo-retriever-benchmark/).
 This repository continues to provide the library, CLI workflows, service
-implementation, and Helm chart that NRB benchmarks.
+implementation that NRB benchmarks.
 
 ### Ingest image storage
 

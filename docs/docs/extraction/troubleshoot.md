@@ -56,14 +56,14 @@ inspect row columns and service logs directly.
 | `GraphIngestionError` with no HTTP status | The named remote stage returned a row-level error, its error payload omitted a status, or the endpoint was unreachable | Check DNS, routing, TLS, the endpoint URL, and the NIM readiness endpoint from the worker or service pod. Inspect `exc.records` after removing secrets and document content. |
 | HTTP `401` or `403` from a NIM | Missing, expired, or unauthorized credentials | Verify `NVIDIA_API_KEY`, `NGC_API_KEY`, or the stage-specific credential in the environment that makes the request. Do not attach API keys to a support case. |
 | HTTP `403` from the Retriever service | Authentication failure or a deployment policy that disallows the requested endpoint, stage, sink, or override | Read the response `detail`. Verify the service token and compare the requested pipeline with `/v1/ingest/pipeline-config`. |
-| HTTP `404` or `410` while opening a service ingest job | The Python SDK and Retriever service can be on incompatible API versions | A current client raises `RetrieverServiceCompatibilityError`. Align the Python package, service image, and Helm chart versions. |
+| HTTP `404` or `410` while opening a service ingest job | The Python SDK and Retriever service can be on incompatible API versions | A current client raises `RetrieverServiceCompatibilityError`. Align the Python package and service image versions. |
 | Other HTTP `4xx` | The upstream service rejected the request | Check file type, rendered page or image size, model name, endpoint path, and request schema. For `413` or `422`, reduce the payload or image size and verify the endpoint's input limits. |
 | HTTP `429` | The remote service is rate-limiting requests | Reduce concurrency or batch size and retry with backoff. Escalate only if throttling persists within the service quota. |
 | HTTP `5xx`, including `503` | The upstream NIM is unavailable, overloaded, not ready, or failed during inference | Check readiness, pod restarts, GPU memory, server logs, and request volume. Retry a minimal input after the NIM is healthy. |
 | Timeout, connection reset, DNS, TLS, or gRPC transport error | The client could not complete transport to the service or NIM | Test connectivity from the process or pod that runs the stage. Verify protocol, port, certificate trust, proxy, and network policy. Preserve the gRPC status and details when present. |
 | A per-document entry in `ServiceIngestResult.failures` | Upload or pipeline processing failed after a service job was created | Correlate the document ID with the job ID and service logs. Other documents in the same result can still have succeeded. |
 | Successful ingest with fewer rows than inputs (caption or ASR enabled) | Caption inference failed before row collection, or ASR dropped failed rows and logged warnings | Re-run with logging enabled. For caption, verify endpoint credentials and payload limits. For ASR, verify gRPC endpoint, `function_id`, and `NVIDIA_API_KEY`. |
-| OOM, worker exit, or pod restart | Host or GPU resources were exhausted, or an orchestrator terminated the worker | Reduce batch size or concurrency, use smaller document groups, and inspect host, Ray, Kubernetes, and NIM resource telemetry. |
+| OOM, worker exit, or container restart | Host or GPU resources were exhausted, or an orchestrator terminated the worker | Reduce batch size or concurrency, use smaller document groups, and inspect host, Ray, Docker, and NIM resource telemetry. |
 | `Infeasible Ray CPU/GPU plan` | Explicit worker counts or node overrides, including required Ray Data source capacity for filesystem inputs, exceed resources currently available to Ray. | Reduce `*_workers` or per-node concurrency, or wait for shared-cluster capacity. Refer to the [performance guide](performance_guide.md). |
 
 The service can retry some transient transport, `429`, and `5xx` failures.
@@ -92,7 +92,7 @@ downstream stage rather than from PDFium.
 
 Before escalating, collect the following:
 
-1. Package, image or Helm versions, and `run_mode`.
+1. Package, image versions, and `run_mode`.
 2. Exception class and sanitized message. For `GraphIngestionError`, include
    sanitized `exc.records`. For row-level failures, include `stage`, `type`,
    and `message` when present.
@@ -104,7 +104,7 @@ Before escalating, collect the following:
    pod.
 6. A minimal non-confidential reproducing input, or characteristics such as
    format, page count, dimensions, and size.
-7. Relevant client, service, Ray, NIM, and Kubernetes logs for the same
+7. Relevant client, service, Ray, NIM, and container logs for the same
    timestamp.
 
 Never include API keys, bearer tokens, document contents, or unredacted signed
@@ -157,7 +157,7 @@ VideoFrameActor requires media dependencies; missing: ffprobe.
 The `ffmpeg-python` wrapper and `nemo-retriever[multimedia]` do not install the
 `ffmpeg` or `ffprobe` binaries the pipeline executes.
 
-For air-gapped or locked-down clusters, refer to [Air-gapped and disconnected deployment](deployment-options.md#air-gapped-deployment).
+For air-gapped or locked-down hosts, refer to [Air-gapped and disconnected deployment](deployment-options.md#air-gapped-deployment).
 
 **Connected environments:**
 
@@ -173,14 +173,7 @@ For the bundled service container at runtime:
 docker run -e INSTALL_FFMPEG=true nemo-retriever-service
 ```
 
-For Helm, when package-repo egress and the image security policy allow startup install:
-
-```yaml
-service:
-  installFfmpeg: true
-```
-
-This path fails with `allowPrivilegeEscalation: false` or `readOnlyRootFilesystem: true`.
+This runtime install requires package-repository network egress.
 
 ## Can't start new thread error { #cant-start-new-thread-error }
 
@@ -209,7 +202,7 @@ To reduce memory pressure, try one or more of the following:
 - Process documents in smaller batches instead of submitting the entire corpus in one job.
 - Route outputs to a sink (for example, `.vdb_upload(...)`, `.webhook(...)`, or `.store(...)`) so results are written out instead of held in memory until the job finishes.
 - In `run_mode="service"`, pass `return_results=False` to `.ingest(...)` when you do not need the full result payload returned to the client. For parameter details, refer to the [Python API guide](nemo-retriever-api-reference.md).
-- Increase available host or pod memory for the ingest workload.
+- Increase available host memory for the ingest workload.
 
 
 
@@ -224,31 +217,22 @@ ValueError: Configured max_batch_size (30) is larger than the model's supported 
 
 This error comes from the embedding NIM process. NeMo Retriever Library does
 not read `EMBEDDER_BATCH_SIZE`. Setting that variable in the SDK, CLI, or
-Helm process environment does not change NIM startup.
+service process environment does not change NIM startup.
 
 Configure the embedding NIM container instead. Use the supported maximum
 from the error message. In this example, that value is `3`.
 
-**Helm:** The default chart deploys `llama-nemotron-embed-vl-1b-v2:2.3.0`
-as `nimOperator.vlm_embed`. For that image, set `NIM_PIPELINE_MAX_BATCH_SIZE`
-on `nimOperator.vlm_embed.env`. That list replaces the chart default, so
-keep the default entries. The following example keeps those defaults and
-adds the batch-size variable:
+**Self-hosted NIM:** Deploy `llama-nemotron-embed-vl-1b-v2:2.3.0` and set
+`NIM_PIPELINE_MAX_BATCH_SIZE` in the NIM container environment. The following
+example sets the batch-size variable:
 
 ```yaml
-nimOperator:
-  vlm_embed:
-    env:
-      - name: NIM_HTTP_API_PORT
-        value: "8000"
-      - name: NIM_TRITON_LOG_VERBOSE
-        value: "1"
-      - name: OMP_NUM_THREADS
-        value: "1"
-      - name: NIM_ENGINE_PRECISION
-        value: fp16
-      - name: NIM_PIPELINE_MAX_BATCH_SIZE
-        value: "3"
+environment:
+  NIM_HTTP_API_PORT: "8000"
+  NIM_TRITON_LOG_VERBOSE: "1"
+  OMP_NUM_THREADS: "1"
+  NIM_ENGINE_PRECISION: fp16
+  NIM_PIPELINE_MAX_BATCH_SIZE: "3"
 ```
 
 **Development Compose:** The default `nim-embedding` image tag is `1.12.0`.
@@ -273,8 +257,6 @@ For image-specific variables, refer to
 [Troubleshoot NVIDIA NeMo Retriever Embedding NIM](https://docs.nvidia.com/nim/nemo-retriever/text-embedding/latest/troubleshoot.html)
 and
 [Environment Variables for NVIDIA NeMo Retriever Embedding NIM](https://docs.nvidia.com/nim/nemo-retriever/text-embedding/latest/environment-variables.html).
-For the Helm env list contract, refer to
-[NIM Operator sub-stack](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#nim-operator-sub-stack).
 
 
 
@@ -407,12 +389,12 @@ ERROR 2025-04-24 22:49:44.268 nimutils.py:68] I0424 22:49:44.265292 98 cache_man
 ERROR 2025-04-24 22:49:44.431 nimutils.py:68] I0424 22:49:44.431796 98 pinned_memory_manager.cc:277] "Pinned memory pool is created at '0x7f8e4a000000' with size 268435456"
 ```
 
-If a real failure occurs, inspect the NIM pod or Compose container logs for
+If a real failure occurs, inspect the NIM or Compose container logs for
 the same timestamp. Do not treat these startup INFO lines as the root cause.
 
 
 
-## LanceDB index creation fails during concurrent Helm ingestion { #lancedb-concurrent-index-creation }
+## LanceDB index creation fails during concurrent ingestion { #lancedb-concurrent-index-creation }
 
 Concurrent ingest workers can finish extraction at nearly the same time and
 send overlapping writes to the VectorDB service. In affected releases, those
@@ -436,7 +418,7 @@ so a committed row is queryable before the next rebuild includes it.
 Only index maintenance is serialized, because LanceDB rejects competing index
 commits. Concurrent writers share one coalesced rebuild: a rebuild that starts
 after a batch was committed also indexes that batch. A write therefore never
-waits behind another writer's index build. There is no Helm value to configure
+waits behind another writer's index build. There is no service setting to configure
 this behavior.
 
 An index-readiness wait that expires no longer fails the write. The VectorDB
@@ -448,9 +430,9 @@ LanceDB index on column 'vector' did not report coverage of 512 row(s) within
 0:01:00. Queries still scan unindexed rows and the next rebuild will cover them.
 ```
 
-Keep the VectorDB deployment at one replica. Row and index serialization is
+Keep the VectorDB service at one replica. Row and index serialization is
 local to a single VectorDB process. It does not coordinate writes across
-multiple pods or independently deployed processes that share a LanceDB
+multiple independently deployed processes that share a LanceDB
 directory.
 
 If a request failed before the upgrade, inspect the table and the ingest job
@@ -473,7 +455,7 @@ are not confirmed durable, so the document is not queryable.
 A write into a managed collection reports
 `Collection write failed for report.pdf: <error>` instead.
 
-The worker pod logs the underlying failure at error level:
+The worker logs the underlying failure at error level:
 
 ```text
 Failed to POST 128 records to vectordb for report.pdf: <error>
@@ -486,142 +468,10 @@ successful. A failed document now means the rows are not confirmed durable.
 
 Complete the following checks:
 
-1. Run `kubectl get pods --namespace <namespace>` and confirm the VectorDB pod is `Running` and ready. A pod that is restarting or unschedulable does not accept writes.
-2. Read the VectorDB pod logs for the same records. A rejected write reports a request or backend error. A write that the worker abandoned on timeout can still be in progress on the VectorDB pod.
-3. If writes time out under load or on slow storage, raise the acknowledgement timeout. `serviceConfig.vectordb.writeTimeoutSeconds` defaults to `300` seconds and covers the row commit plus the index maintenance that follows it.
+1. Confirm the VectorDB process is running and ready. A process that is restarting does not accept writes.
+2. Read the VectorDB logs for the same records. A rejected write reports a request or backend error. A write that the worker abandoned on timeout can still be in progress on the VectorDB process.
+3. If writes time out under load or on slow storage, raise the acknowledgement timeout. The VectorDB write timeout defaults to `300` seconds and covers the row commit plus the index maintenance that follows it.
 4. Resubmit the failed documents after the write path is healthy. A write that timed out on the worker can still have committed its rows, and the legacy append path does not deduplicate rows, so check the table row count first.
-
-To raise the timeout on an existing release, run the following command:
-
-```bash
-helm upgrade retriever ./nemo_retriever/helm \
-  --reuse-values \
-  --set serviceConfig.vectordb.writeTimeoutSeconds=900
-```
-
-For the rendered service key and sibling VectorDB values, refer to [Service configuration](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#service-configuration-rendered-into-retriever-serviceyaml).
-
-
-## Helm install succeeds but PersistentVolumeClaims stay Pending { #helm-pending-pvcs }
-
-`helm install` can report `STATUS: deployed` while every default PersistentVolumeClaim stays `Pending`. That status means Helm rendered the release. It does not mean the retriever service, VectorDB, or core NIM workloads can schedule.
-
-A representative claim event looks like the following:
-
-```text
-Type    Reason         From                          Message
-Normal  FailedBinding  persistentvolume-controller   no persistent volumes available for this claim and no storage class is set
-```
-
-This event means the claim omitted `storageClassName` and the cluster has neither a default StorageClass nor a compatible classless persistent volume.
-
-Complete the following checks:
-
-1. Run `kubectl get storageclass` and `kubectl get pv`. Confirm a default StorageClass, a named class you set on every default claim, or compatible `Available` persistent volumes.
-2. Run `kubectl get pvc --namespace <namespace>`. A default install creates seven claims. All seven must reach `Bound` before the functional workloads can start.
-3. If you intended a named StorageClass, set the three chart-managed paths and the four per-NIM `nimOperator.<key>.storage.pvc.storageClass` paths. Do not set only `nimOperator.nimCache.pvc.storageClass`. That chart-level value is not applied to the core NIMCache resources.
-4. After you add a default StorageClass or compatible volumes, confirm the claims become `Bound`. If they remain `Pending`, uninstall and reinstall after the storage strategy is in place.
-
-For the default claim list, Helm value paths, and preflight commands, refer to [Kubernetes Helm Storage Requirements](prerequisites-support-matrix.md#kubernetes-helm-storage-requirements) and [Persistent storage prerequisite](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#persistent-storage-prerequisite).
-
-## Core NIM pods stay Pending for GPU { #helm-pending-gpus }
-
-`helm install` can report `STATUS: deployed` while one or more core NIM pods stay `Pending`. The default chart creates four NIMService workloads. Each requests `nvidia.com/gpu: 1`. On a conventional cluster without MIG or time-slicing, the scheduler needs four allocatable GPU slots across eligible nodes.
-
-A representative pod event looks like the following:
-
-```text
-Warning  FailedScheduling  default-scheduler  0/1 nodes are available:
-  1 Insufficient nvidia.com/gpu.
-```
-
-Complete the following checks:
-
-1. Run `kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu` and sum `GPU` across eligible nodes. A default core install needs four slots across the cluster. Four one-GPU nodes are enough. A single node needs four slots only when you pack all four core NIMs onto one physical GPU with sharing and placement constraints.
-2. Run `kubectl get pods --namespace <namespace>` and `kubectl describe pod <nim-pod>`. Confirm the Pending pods are the core NIMServices (`nemotron-page-elements-v3`, `nemotron-table-structure-v1`, `nemotron-ocr-v2`, and `llama-nemotron-embed-vl-1b-v2`).
-3. Either add GPU capacity so four slots are allocatable across the cluster, or configure GPU Operator time-slicing with at least four replicas before you reinstall. Time-slicing creates logical slots. MIG is an advanced GPU Operator configuration outside this chart. For one-GPU placement, cluster-wide oversubscription, and MIG constraints, refer to [GPU scheduling prerequisite](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#gpu-scheduling-prerequisite).
-4. After sharing or extra GPUs are in place, confirm the four core NIM pods reach `Running`.
-
-For VRAM versus scheduling, the time-slicing ConfigMap, and ClusterPolicy patch, refer to [Kubernetes Helm GPU scheduling](prerequisites-support-matrix.md#kubernetes-helm-gpu-scheduling) and [GPU scheduling prerequisite](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#gpu-scheduling-prerequisite).
-
-## Split topology Helm install or upgrade times out with Deployments not ready { #helm-split-topology-startup-deadlock }
-
-`helm upgrade --install --wait` can time out in split topology
-(`topology.mode: split`) with errors similar to the following:
-
-```text
-Release "<release>" failed:
-resource Deployment/<release>-nemo-retriever-gateway not ready
-resource Deployment/<release>-nemo-retriever-realtime not ready
-resource Deployment/<release>-nemo-retriever-batch not ready
-context deadline exceeded
-```
-
-This deadlock occurs when the gateway readiness probe uses deep
-`GET /v1/health`, which returns HTTP `503` until realtime and batch workers are
-healthy, while worker Pods cannot start until their `wait-for-gateway` init
-container reaches the gateway's shallow `GET /v1/live` endpoint. The externally
-exposed gateway Service does not publish endpoints for an unready Pod, so neither
-side can become ready on a clean install.
-
-The chart renders an internal gateway startup Service named
-`<release>-nemo-retriever-gateway-startup` with `publishNotReadyAddresses: true`.
-Worker init containers poll `/v1/live` through that Service so startup completes
-without manual intervention. Client traffic continues to use the
-readiness-gated gateway Service.
-
-If you run an older chart that does not render the startup Service, you can
-unblock the install with a one-time patch on the gateway Service:
-
-```bash
-kubectl patch service <release>-nemo-retriever-gateway --type=merge \
-  -p '{"spec":{"publishNotReadyAddresses":true}}'
-```
-
-Upgrade to a chart version that includes the startup Service so you do not need
-to repeat that patch after every reinstall. Refer to [Health probes](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#health-probes) and [Service networking](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#service-networking) in the Helm chart README.
-
-## Helm upgrade fails when changing a NIM image repository or tag { #helm-nimcache-modelpuller-immutable }
-
-`helm upgrade` can fail when you change `nimOperator.<key>.image.repository` or `nimOperator.<key>.image.tag` on an existing release. The chart reuses the `NIMCache` name, for example `nemotron-page-elements-v3`, while `spec.source.ngc.modelPuller` changes to the new `repository:tag` value.
-
-The NIM Operator `NIMCache` CRD marks `modelPuller` immutable. Kubernetes rejects the update with a message similar to the following:
-
-```text
-modelPuller is an immutable field. Please create a new NIMCache resource instead when you want to change this container.
-```
-
-Helm can apply other release resources before that rejection. The `NIMCache` then remains on the old image while the rest of the release has moved.
-
-Do not retry `helm upgrade` until you delete the existing `NIMCache`. Complete the following steps:
-
-1. Drain ingest traffic that depends on the affected NIM.
-2. Run `kubectl get nimcache <name> --namespace <namespace>` and confirm the live `modelPuller` value differs from the new `repository:tag`.
-3. Delete the `NIMCache`. Helm `keep` annotations do not block `kubectl delete`.
-4. If the operator-created PVC remains, delete it so the new image re-pulls weights. Default claim names use a `-pvc` suffix, for example `nemotron-page-elements-v3-pvc`.
-5. Re-run `helm upgrade` with the new repository or tag. Helm creates a new `NIMCache`.
-6. Wait until the new cache is ready before you send traffic.
-
-The affected NIM is unavailable during re-cache. Repeat the sequence for every NIM whose image changes.
-
-Changing `service.image.repository` or `service.image.tag` does not use `NIMCache` and is not subject to this rule.
-
-For default cache names, PVC cleanup, and the full upgrade sequence, refer to [Changing a NIM image repository or tag](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#changing-nim-image-repository-or-tag).
-
-## NIMCache or NIMService still uses ngc-secret after a global Secret rename { #helm-nim-secret-names }
-
-Retriever Pods inherit `ngcImagePullSecret.name` and `ngcApiSecret.name`. Empty per-NIM `image.pullSecrets` and `authSecret` inherit the same names.
-
-If NIMCache or NIMService still shows `ngc-secret` or `ngc-api` after a rename, you still have a non-empty per-NIM override. The retriever Deployment can become Ready while NIM model-download Jobs and NIM Pods fail because they reference Secrets that do not exist.
-
-Complete the following checks:
-
-1. Render the chart with the NIM Operator CRDs enabled. Inspect `pullSecret` on every `NIMCache` and `pullSecrets` on every `NIMService`, plus `authSecret` on both.
-2. Confirm those fields match Secrets that exist in the release namespace.
-3. If a NIM still lists `ngc-secret` or `ngc-api` after you renamed the global Secret names, clear `nimOperator.<key>.image.pullSecrets` and `nimOperator.<key>.authSecret`, or set them to the new names. Empty values inherit the global names.
-4. Top-level `imagePullSecrets` applies only to Retriever Pods. It does not update NIM Operator custom resources.
-
-For value paths and a rename example, refer to [Use externally managed Secrets](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#use-externally-managed-secrets) and [Secrets](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#secrets) in the Helm chart README.
 
 ## Agentic retrieval fails with auto tool choice HTTP 400 { #agentic-auto-tool-choice }
 
@@ -633,18 +483,13 @@ For value paths and a rename example, refer to [Use externally managed Secrets](
 
 The CLI then exits with `Agentic retrieval failed (llm_call_failed)`.
 
-The Helm `answer_llm` Super-49B NIM is not tool-call ready by default. Add `--enable-auto-tool-choice --tool-call-parser llama3_json` to `NIM_PASSTHROUGH_ARGS` and set `serviceConfig.agentic` for service mode. NVIDIA-hosted Build endpoints do not need this change. `POST /v1/answer` is a separate path and does not require tool calling.
+A self-hosted Super-49B NIM is not tool-call ready by default. Add `--enable-auto-tool-choice --tool-call-parser llama3_json` to `NIM_PASSTHROUGH_ARGS` and set the service `agentic` block for service mode. NVIDIA-hosted Build endpoints do not need this change. `POST /v1/answer` is a separate path and does not require tool calling.
 
-For the copy-paste Helm values and CLI command, refer to [Self-hosted Helm Super-49B](workflow-agentic-retrieval.md#self-hosted-helm-super-49b).
+For the copy-paste command, refer to [Self-hosted Super-49B](workflow-agentic-retrieval.md#self-hosted-super-49b).
 
 ## Related Topics { #related-topics }
 
 - [Pre-Requisites & Support Matrix](prerequisites-support-matrix.md)
-- [Kubernetes Helm Storage Requirements](prerequisites-support-matrix.md#kubernetes-helm-storage-requirements)
-- [Kubernetes Helm GPU scheduling](prerequisites-support-matrix.md#kubernetes-helm-gpu-scheduling)
 - [Deployment options](deployment-options.md)
-- [Deploy with Helm](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md)
-- [Changing a NIM image repository or tag](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#changing-nim-image-repository-or-tag)
-- [Use externally managed Secrets](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md#use-externally-managed-secrets)
-- [Workflow: Agentic retrieval](workflow-agentic-retrieval.md#self-hosted-helm-super-49b)
+- [Workflow: Agentic retrieval](workflow-agentic-retrieval.md#self-hosted-super-49b)
 - [About getting started](getting-started-about.md) (prerequisites and deployment)

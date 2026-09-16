@@ -4,7 +4,7 @@
 
 name: nemo-retriever-service-dev
 
-# Development-only service-mode stack. Production deployments use Helm.
+# Development-only service-mode stack.
 x-retriever-image: &retriever-image
   image: ${NEMO_RETRIEVER_IMAGE:-nemo-retriever-service:dev}
   build:
@@ -100,8 +100,8 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Page-elements and table-structure are separate Compose services (matching
-  # Helm) but both run the combined nemotron-object-detection:2.0.0 image.
+  # Page-elements and table-structure are separate Compose services, but both
+  # run the combined nemotron-object-detection:2.0.0 image.
   nim-page-elements:
     <<: *nim-service
     profiles: [nims-core]

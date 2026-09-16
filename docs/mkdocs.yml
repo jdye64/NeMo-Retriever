@@ -85,8 +85,6 @@ nav:
       - "Authentication and API keys": extraction/api-keys.md
   - "3. Deployment options":
       - "Compare deployment options": extraction/deployment-options.md
-      - "OpenShift deployment (Helm)": https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/openshift.md
-      - "Helm chart (Kubernetes)": https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever/helm
       - "Docker service image": https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/docker.md
   - "4. Core workflows":
       - "Workflow: Ingest documents into a searchable VDB collection": extraction/workflow-document-ingestion.md
@@ -161,7 +159,7 @@ plugins:
         # TODO: after nv-ingest code removal, update this link when CLI docs are relocated.
         extraction/nv-ingest_cli.md: https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever/docs/cli
         extraction/helm.md: extraction/deployment-options.md
-        extraction/quickstart-guide.md: https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever/helm
+        extraction/quickstart-guide.md: extraction/deployment-options.md
         extraction/choose-your-path.md: extraction/deployment-options.md
         extraction/hosted-nims-when-to-use.md: extraction/deployment-options.md
         extraction/releasenotes-nv-ingest.md: extraction/releasenotes.md

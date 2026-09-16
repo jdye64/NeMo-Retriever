@@ -656,7 +656,7 @@ def _build_graph_ingestor_from_spec(
         )
         # Only attach the worker-wide ASR params to the per-request ingestor
         # when the request is genuinely audio/video. ``asr_params`` is
-        # auto-derived from the cluster's ``audio_grpc_endpoint`` and would
+        # auto-derived from the service ``audio_grpc_endpoint`` and would
         # otherwise taint every PDF / image / text / HTML upload with audio
         # state — which then mis-routes the request through the audio-only
         # graph in :func:`nemo_retriever.graph.ingestor_runtime.build_graph`

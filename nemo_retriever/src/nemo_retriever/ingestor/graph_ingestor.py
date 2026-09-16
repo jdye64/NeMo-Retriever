@@ -285,13 +285,13 @@ def _hint_for_stage(diag: _StageDiagnostic, statuses: set[int | None]) -> str:
     if bucket == "server":
         return (
             f"{name}{url_clause} returned a 5xx server error \u2014 "
-            "inspect the NIM pod logs, GPU memory, and readiness "
+            "inspect the NIM process logs, GPU memory, and readiness "
             "probes; the upstream model may be saturated or crashed."
         )
     return (
         f"{name}{url_clause} reported a row-level error \u2014 verify "
-        "the NIM is reachable from the retriever service pod "
-        f"(e.g. `kubectl exec ... -- curl -sS {diag.invoke_url or '<invoke_url>'}` "
+        "the NIM is reachable from the retriever service host "
+        f"(e.g. `curl -sS {diag.invoke_url or '<invoke_url>'}` "
         "should return a non-empty response) and that its readiness "
         "endpoint is healthy."
     )

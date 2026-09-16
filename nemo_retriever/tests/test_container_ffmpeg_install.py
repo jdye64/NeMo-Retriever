@@ -78,32 +78,10 @@ class ContainerFfmpegInstallTests(TestCase):
         self.assertIn("/usr/bin/apt-get clean", installer)
         self.assertNotIn("sudo ", installer)
 
-    def test_helm_chart_exposes_first_class_runtime_ffmpeg_value(self) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        values = _read_required_file(repo_root / "nemo_retriever/helm/values.yaml")
-        deployment = _read_required_file(repo_root / "nemo_retriever/helm/templates/deployment.yaml")
-
-        self.assertIn("installFfmpeg: true", values)
-        self.assertIn("service.installFfmpeg", values)
-        self.assertIn("cannot both set INSTALL_FFMPEG", deployment)
-        self.assertEqual(deployment.count("- name: INSTALL_FFMPEG"), 2)
-        self.assertEqual(deployment.count("{{- if $svc.installFfmpeg }}"), 2)
-
-    def test_helm_docs_describe_runtime_ffmpeg_caveats(self) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        helm_readme = _read_required_file(repo_root / "nemo_retriever/helm/README.md")
-
-        self.assertIn("service.installFfmpeg", helm_readme)
-        self.assertIn("INSTALL_FFMPEG=true", helm_readme)
-        self.assertIn("allowPrivilegeEscalation: false", helm_readme)
-        self.assertIn("readOnlyRootFilesystem: true", helm_readme)
-        self.assertIn("network egress", helm_readme)
-
     def test_source_docs_do_not_document_ffmpeg_build_arg(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         docs = (
             repo_root / "nemo_retriever/README.md",
-            repo_root / "nemo_retriever/helm/README.md",
             repo_root / "docs/docs/extraction/audio-video.md",
             repo_root / "docs/docs/extraction/deployment-options.md",
             repo_root / "docs/docs/extraction/prerequisites-support-matrix.md",

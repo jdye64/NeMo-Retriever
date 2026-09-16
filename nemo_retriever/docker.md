@@ -1,6 +1,6 @@
 # Docker Service Image
 
-This page covers the standalone Docker image for the NeMo Retriever service. For production-scale service and NIM deployment, use the Helm chart in [`helm/README.md`](helm/README.md) and the published NeMo Retriever Library install procedures.
+This page covers the standalone Docker image for the NeMo Retriever service. Kubernetes Helm charts are no longer supported. For published install procedures, refer to the NeMo Retriever Library documentation.
 
 Published `nrl-service` tags (release, dated development images from main-branch CI, and nightly) are multi-architecture images for `linux/amd64` and `linux/arm64`. `docker pull` selects the variant that matches the host. A local `docker build` without `--platform` produces the architecture of the machine that runs the build.
 
@@ -64,7 +64,7 @@ docker run --rm \
   retriever service start --config /etc/nemo-retriever/retriever-service.yaml
 ```
 
-Use Kubernetes Secrets, Helm values, or container environment variables for credentials. Do not bake API keys into derived images.
+Use container environment variables for credentials. Do not bake API keys into derived images.
 
 ## Run A Local VectorDB With The Service
 
@@ -95,7 +95,7 @@ To use remote embedding instead, configure `nim_endpoints.embed_invoke_url` and 
 retriever service start --config my-retriever-service.yaml --launch-vectordb
 ```
 
-The launcher is limited to loopback VectorDB URLs. Omit the flag for an existing VectorDB. Helm deployments continue to run VectorDB in a separate pod.
+The launcher is limited to loopback VectorDB URLs. Omit the flag for an existing VectorDB.
 
 If VectorDB exits during startup or does not become ready, read the VectorDB output in the terminal that started the service. Verify the VectorDB configuration, embedding model setup and credentials, writable LanceDB directory, and that port `7671` is available.
 
@@ -113,4 +113,4 @@ docker run --rm \
   nemo-retriever-service:dev
 ```
 
-For restricted or air-gapped environments, build a derived image that includes `ffmpeg` and `ffprobe`, then set the Helm `service.image.*` values or run that derived image directly.
+For restricted or air-gapped environments, build a derived image that includes `ffmpeg` and `ffprobe`, then run that derived image directly.

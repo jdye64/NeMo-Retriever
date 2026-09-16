@@ -5,17 +5,17 @@
 """Regression tests for the upload-time ffmpeg/ffprobe availability gate.
 
 When the retriever service container is deployed without FFmpeg (the
-default in the Helm chart, where ``service.installFfmpeg=false``), the
-old behaviour was to accept audio / video uploads, route them to the
+default service image omits those binaries unless ``INSTALL_FFMPEG=true``),
+the old behaviour was to accept audio / video uploads, route them to the
 batch worker pool, and then crash the worker with::
 
     RuntimeError: MediaChunkActor requires media dependencies; missing:
     ffmpeg, ffprobe.
 
 The fix gates uploads at request time with an HTTP 501 response that
-points at the Helm value and ``apt-get`` command needed to make media
-ingestion work, and logs a startup-time WARNING so cluster operators
-see the problem before any traffic arrives.
+points at the container environment variable and ``apt-get`` command
+needed to make media ingestion work, and logs a startup-time WARNING so
+operators see the problem before any traffic arrives.
 
 These tests exercise the gate without requiring real FFmpeg binaries:
 :func:`is_media_available` is monkey-patched to return ``False`` so the
@@ -99,7 +99,7 @@ def test_enforce_media_dependencies_passes_when_ffmpeg_available() -> None:
 
 
 def test_enforce_media_dependencies_raises_501_with_actionable_detail() -> None:
-    """Missing FFmpeg → HTTP 501 with Helm value + apt-get command."""
+    """Missing FFmpeg → HTTP 501 with container install hint + apt-get command."""
     with (
         patch(
             "nemo_retriever.common.modality.audio.media_interface.is_media_available",
@@ -117,7 +117,7 @@ def test_enforce_media_dependencies_raises_501_with_actionable_detail() -> None:
     assert err.status_code == 501
     detail = str(err.detail)
     assert "ffmpeg" in detail and "ffprobe" in detail
-    assert "service.installFfmpeg=true" in detail
+    assert "INSTALL_FFMPEG=true" in detail
     assert "apt-get update && apt-get install -y --no-install-recommends ffmpeg" in detail
     assert "clip.mp3" in detail
 
@@ -192,7 +192,7 @@ def test_audio_video_upload_rejected_with_501_when_ffmpeg_missing(
     assert resp.status_code == 501, resp.text
     detail = resp.json()["detail"]
     assert "ffmpeg" in detail and "ffprobe" in detail
-    assert "service.installFfmpeg=true" in detail
+    assert "INSTALL_FFMPEG=true" in detail
     assert filename in detail
 
 
@@ -242,7 +242,7 @@ def test_startup_logs_warning_when_ffmpeg_missing(caplog: pytest.LogCaptureFixtu
     assert records, "Expected a WARNING about missing media dependencies"
     msg = records[-1].getMessage()
     assert "ffmpeg" in msg and "ffprobe" in msg
-    assert "service.installFfmpeg=true" in msg
+    assert "INSTALL_FFMPEG=true" in msg
     assert "HTTP 501" in msg
 
 

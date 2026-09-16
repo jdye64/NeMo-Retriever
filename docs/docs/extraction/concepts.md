@@ -49,7 +49,7 @@ Token-based splitting uses the revision-pinned tokenizer for the default embeddi
 ## Deployment modes { #deployment-modes }
 
 - **Library mode** — Run without the full container stack where appropriate; refer to [Deployment options](deployment-options.md).
-- **Kubernetes / Helm (self-hosted)** — Refer to [Deploy (Helm chart)](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/helm/README.md) and [deployment options](deployment-options.md) for running the full microservices pipeline on your infrastructure.
+- **Docker service** — Build and run the standalone service image; refer to [deployment options](deployment-options.md).
 - **Notebooks** — [Jupyter examples](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/examples/README.md) for experimentation and RAG demos.
 
 For a concise comparison, refer to [Deployment options](deployment-options.md).

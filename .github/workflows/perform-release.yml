@@ -24,11 +24,6 @@ on:
         required: false
         type: boolean
         default: false
-      skip-helm-chart:
-        description: '⛔ SKIP Helm chart — disable Helm build and publish entirely'
-        required: false
-        type: boolean
-        default: false
       release-type:
         description: 'Release type for PyPI packages'
         required: false
@@ -169,57 +164,6 @@ jobs:
           cache-from: type=gha,scope=nvingest-release
           outputs: type=cacheonly
 
-  helm-build:
-    name: Build Helm Chart
-    if: ${{ !inputs.skip-helm-chart }}
-    needs: determine-version
-    runs-on: ubuntu-latest
-    env:
-      HELM_CHART_DIR: nemo_retriever/helm
-      HELM_CHART_NAME: nemo-retriever
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.determine-version.outputs.source-ref }}
-
-      - name: Overlay CI scripts from workflow branch
-        if: ${{ github.ref_name != needs.determine-version.outputs.source-ref }}
-        run: |
-          git fetch --depth=1 origin "${{ github.ref_name }}"
-          git checkout FETCH_HEAD -- ci/scripts/
-
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-
-      - name: Lint Helm chart
-        run: helm lint "${HELM_CHART_DIR}"
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Install Python dependencies
-        run: pip install pyyaml
-
-      - name: Package chart (validate)
-        run: |
-          python ci/scripts/release_helm_chart.py \
-            --org "${{ secrets.NGC_ORG }}" \
-            --team "${{ secrets.NGC_TEAM }}" \
-            --name "${HELM_CHART_NAME}" \
-            --chart-dir "${HELM_CHART_DIR}" \
-            --version "${{ needs.determine-version.outputs.version }}" \
-            --dry-run
-
-      - name: Upload Helm chart artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: nemo-retriever-helm-chart
-          path: nemo-retriever-*.tgz
-          if-no-files-found: error
-
   # ══════════════════════════════════════════════════════════════════════
   #  Publish Phase — runs only after ALL builds succeed and dry-run is
   #  off.  Every publish job depends on every build job so that a single
@@ -233,7 +177,6 @@ jobs:
       - determine-version
       - nvingest-docker-build
       - pypi-build
-      - helm-build
     runs-on: linux-large-disk
     outputs:
       image: ${{ steps.push.outputs.image }}
@@ -287,66 +230,12 @@ jobs:
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           docker buildx imagetools inspect "$IMAGE"
 
-  helm-publish:
-    name: Publish Helm Chart
-    if: ${{ !inputs.dry-run && !inputs.skip-helm-chart && !cancelled() && !failure() }}
-    needs:
-      - determine-version
-      - nvingest-docker-build
-      - pypi-build
-      - helm-build
-    runs-on: ubuntu-latest
-    env:
-      NGC_CLI_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      NGC_CLI_ORG: ${{ secrets.NGC_ORG }}
-      NGC_CLI_TEAM: ${{ secrets.NGC_TEAM }}
-      NGC_CLI_FORMAT_TYPE: json
-      HELM_CHART_DIR: nemo_retriever/helm
-      HELM_CHART_NAME: nemo-retriever
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.determine-version.outputs.source-ref }}
-
-      - name: Overlay CI scripts from workflow branch
-        if: ${{ github.ref_name != needs.determine-version.outputs.source-ref }}
-        run: |
-          git fetch --depth=1 origin "${{ github.ref_name }}"
-          git checkout FETCH_HEAD -- ci/scripts/
-
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-
-      - name: Lint Helm chart
-        run: helm lint "${HELM_CHART_DIR}"
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Install Python dependencies
-        run: pip install ngcsdk pyyaml
-
-      - name: Publish chart to NGC
-        env:
-          NGC_CLI_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: |
-          python ci/scripts/release_helm_chart.py \
-            --org "${{ secrets.NGC_ORG }}" \
-            --team "${{ secrets.NGC_TEAM }}" \
-            --name "${HELM_CHART_NAME}" \
-            --chart-dir "${HELM_CHART_DIR}" \
-            --version "${{ needs.determine-version.outputs.version }}"
-
   pypi-publish:
     name: Publish Python Wheels (last — PyPI versions are immutable)
     if: ${{ !inputs.dry-run && !cancelled() && !failure() }}
     needs:
       - pypi-build
       - nvingest-docker-publish
-      - helm-publish
     uses: ./.github/workflows/reusable-pypi-publish.yml
     secrets:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
@@ -361,7 +250,6 @@ jobs:
       - determine-version
       - pypi-publish
       - nvingest-docker-publish
-      - helm-publish
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -387,8 +275,6 @@ jobs:
       - pypi-publish
       - nvingest-docker-build
       - nvingest-docker-publish
-      - helm-build
-      - helm-publish
       - tag-release
     runs-on: ubuntu-latest
     steps:
@@ -404,11 +290,8 @@ jobs:
           PYPI_VERSION: ${{ needs.pypi-build.outputs.version }}
           NVINGEST_BUILD_RESULT: ${{ needs.nvingest-docker-build.result }}
           NVINGEST_PUBLISH_RESULT: ${{ needs.nvingest-docker-publish.result }}
-          HELM_BUILD_RESULT: ${{ needs.helm-build.result }}
-          HELM_PUBLISH_RESULT: ${{ needs.helm-publish.result }}
           TAG_RESULT: ${{ needs.tag-release.result }}
           SKIP_DOCKER: ${{ inputs.skip-docker }}
-          SKIP_HELM: ${{ inputs.skip-helm-chart }}
           NVINGEST_IMAGE: ${{ needs.nvingest-docker-publish.outputs.image || needs.nvingest-docker-build.outputs.image }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -427,7 +310,7 @@ jobs:
           }
 
           ALL_BUILDS_OK="true"
-          for r in "$PYPI_BUILD_RESULT" "$NVINGEST_BUILD_RESULT" "$HELM_BUILD_RESULT"; do
+          for r in "$PYPI_BUILD_RESULT" "$NVINGEST_BUILD_RESULT"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               ALL_BUILDS_OK="false"
               break
@@ -480,20 +363,6 @@ jobs:
             MSG+="\n$(status_emoji "$NVINGEST_BUILD_RESULT") *nv-ingest Docker* — Build: ${NVINGEST_BUILD_RESULT}"
           else
             MSG+="\n$(status_emoji "$NVINGEST_PUBLISH_RESULT") *nv-ingest Docker* — Publish blocked (other build failed)"
-          fi
-
-          # — Helm Chart —
-          HELM_REF="${NGC_ORG}/${NGC_TEAM}/nemo-retriever:${VERSION}"
-          if [ "$SKIP_HELM" = "true" ]; then
-            MSG+="\n:fast_forward: *Helm Chart* — Disabled (skip-helm-chart)"
-          elif [ "$DRY_RUN" = "true" ]; then
-            MSG+="\n$(status_emoji "$HELM_BUILD_RESULT") *Helm Chart* — Built and validated (not published)"
-          elif [ "$HELM_PUBLISH_RESULT" = "success" ]; then
-            MSG+="\n:white_check_mark: *Helm Chart* — \`${HELM_REF}\` (NGC)"
-          elif [ "$HELM_BUILD_RESULT" != "success" ]; then
-            MSG+="\n$(status_emoji "$HELM_BUILD_RESULT") *Helm Chart* — Build: ${HELM_BUILD_RESULT}"
-          else
-            MSG+="\n$(status_emoji "$HELM_PUBLISH_RESULT") *Helm Chart* — Publish blocked (other build failed)"
           fi
 
           # — Git Tag —

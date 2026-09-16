@@ -45,7 +45,7 @@ _BENIGN_CONTENT_METADATA_TOKENS = frozenset({"count", "encoding", "language", "l
 
 
 def tracing_enabled_from_env(env: Mapping[str, str] | None = None) -> bool:
-    """Return whether Helm-compatible OpenTelemetry env enables tracing."""
+    """Return whether OpenTelemetry environment enables tracing."""
     source = os.environ if env is None else env
     if source.get("OTEL_SDK_DISABLED", "").strip().lower() == "true":
         return False

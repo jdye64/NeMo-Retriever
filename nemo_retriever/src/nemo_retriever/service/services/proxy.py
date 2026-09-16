@@ -6,8 +6,7 @@
 
 When the service runs in ``gateway`` mode it does not maintain local worker
 pools.  Instead it forwards each ingest request to the appropriate backend
-(realtime or batch) worker pod over HTTP, using Kubernetes-internal DNS for
-service discovery.
+(realtime or batch) worker over HTTP.
 
 The proxy streams the multipart request body through without buffering the
 entire file in memory, then returns the backend response verbatim.

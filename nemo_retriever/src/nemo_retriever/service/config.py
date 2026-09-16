@@ -374,8 +374,8 @@ class MCPConfig(RichModel):
 class GatewayConfig(RichModel):
     """Backend service URLs used when ``mode`` is ``gateway``.
 
-    Defaults use Kubernetes in-cluster DNS names that match the Helm chart
-    service names generated when ``topology.mode: split``.
+    Defaults use example service hostnames for split topology. Override
+    these URLs for your Docker Compose or host-level deployment.
     """
 
     model_config = ConfigDict(extra="forbid")

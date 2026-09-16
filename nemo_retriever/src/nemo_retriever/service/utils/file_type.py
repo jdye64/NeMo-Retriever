@@ -175,11 +175,9 @@ def enforce_media_dependencies(classification: FileClassification) -> None:
 
     Translates what would otherwise surface as a Ray worker crash
     (``RuntimeError: MediaChunkActor requires media dependencies; missing:
-    ffmpeg, ffprobe``) into an HTTP 501 with an actionable Helm value
-    and ``apt-get`` command. The check is local to this process — the
-    gateway, realtime and batch pods all share the same container image,
-    so an inconsistency between them is not possible under the standard
-    chart layout.
+    ffmpeg, ffprobe``) into an HTTP 501 with an actionable container
+    environment variable and ``apt-get`` command. The check is local to
+    this process.
 
     Audio / video ingestion only — other file categories are passed
     through without invoking the FFmpeg probe.
@@ -188,7 +186,7 @@ def enforce_media_dependencies(classification: FileClassification) -> None:
         return
 
     from nemo_retriever.common.modality.audio.media_interface import (
-        HELM_FFMPEG_INSTALL_VALUE,
+        CONTAINER_FFMPEG_INSTALL_ENV,
         MANUAL_FFMPEG_INSTALL_COMMAND,
         is_media_available,
         missing_media_dependencies,
@@ -203,13 +201,12 @@ def enforce_media_dependencies(classification: FileClassification) -> None:
         detail=(
             f"Audio and video ingestion require FFmpeg in the retriever "
             f"service container, but the following dependencies are "
-            f"missing: {missing}. Re-deploy the Helm chart with "
-            f"`--set {HELM_FFMPEG_INSTALL_VALUE}` to install FFmpeg at "
-            f"container startup, install it manually inside the container "
-            f"with `{MANUAL_FFMPEG_INSTALL_COMMAND}`, or build a custom "
-            f"image that already includes ffmpeg/ffprobe (recommended for "
-            f"air-gapped clusters). See the Helm chart README "
-            f'("Audio / video extraction") for details. File: '
+            f"missing: {missing}. Restart the service container with "
+            f"`docker run {CONTAINER_FFMPEG_INSTALL_ENV} ...` to install "
+            f"FFmpeg at container startup, install it manually inside the "
+            f"container with `{MANUAL_FFMPEG_INSTALL_COMMAND}`, or build a "
+            f"custom image that already includes ffmpeg/ffprobe "
+            f"(recommended for air-gapped hosts). File: "
             f"{classification.filename!r}."
         ),
     )

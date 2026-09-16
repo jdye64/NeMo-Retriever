@@ -142,7 +142,7 @@ The example configuration leaves NIM endpoints unset and uses local Hugging Face
 retriever service start --config my-retriever-service.yaml --launch-vectordb
 ```
 
-Use the command above when `nim_endpoints.embed_invoke_url` is configured. Omit the flag to use an existing VectorDB. Helm continues to deploy VectorDB as a separate pod.
+Use the command above when `nim_endpoints.embed_invoke_url` is configured. Omit the flag to use an existing VectorDB.
 
 If VectorDB exits during startup or does not become ready, inspect the VectorDB output in the terminal that started the service. Verify the VectorDB configuration, embedding model setup and credentials, writable LanceDB directory, and that port `7671` is available.
 

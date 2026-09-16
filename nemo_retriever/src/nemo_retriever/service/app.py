@@ -82,18 +82,18 @@ def _check_media_dependencies(mode: str) -> None:
 
     Audio and video ingestion uploads fail with HTTP 501 when these
     binaries are absent (see :func:`enforce_media_dependencies`). Surfacing
-    a clear WARNING at startup gives cluster operators a chance to fix
-    the deployment (set ``service.installFfmpeg=true`` or bake FFmpeg
-    into a custom image) before the first media upload arrives, instead
-    of debugging a worker traceback after the fact.
+    a clear WARNING at startup gives operators a chance to fix the
+    deployment (set ``INSTALL_FFMPEG=true`` or bake FFmpeg into a custom
+    image) before the first media upload arrives, instead of debugging a
+    worker traceback after the fact.
 
-    The gateway pod does not run pipeline workers, so its missing FFmpeg
-    is only a problem if it also classifies media uploads — which it
-    does (it computes the routing category before forwarding). The
+    The gateway process does not run pipeline workers, so its missing
+    FFmpeg is only a problem if it also classifies media uploads — which
+    it does (it computes the routing category before forwarding). The
     warning therefore applies to every service role.
     """
     from nemo_retriever.common.modality.audio.media_interface import (
-        HELM_FFMPEG_INSTALL_VALUE,
+        CONTAINER_FFMPEG_INSTALL_ENV,
         MANUAL_FFMPEG_INSTALL_COMMAND,
         is_media_available,
         missing_media_dependencies,
@@ -110,12 +110,12 @@ def _check_media_dependencies(mode: str) -> None:
     logger.warning(
         "Media dependencies missing in this container: %s. Audio and video "
         "uploads will be rejected with HTTP 501 (mode=%s). To enable "
-        "media ingestion, redeploy the Helm chart with "
-        "`--set %s`, install FFmpeg manually with `%s`, or build a "
-        "custom image that includes ffmpeg/ffprobe.",
+        "media ingestion, restart the container with `docker run %s ...`, "
+        "install FFmpeg manually with `%s`, or build a custom image that "
+        "includes ffmpeg/ffprobe.",
         missing,
         mode,
-        HELM_FFMPEG_INSTALL_VALUE,
+        CONTAINER_FFMPEG_INSTALL_ENV,
         MANUAL_FFMPEG_INSTALL_COMMAND,
     )
 
