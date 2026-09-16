@@ -134,7 +134,12 @@ def summarize_index(
         )
         for source, pages in sorted(pages_by_source.items(), key=lambda item: item[0])
     ]
-    unique_pages = {(doc.source, page) for doc, pages in pages_by_source.items() for page in pages if page is not None}
+    unique_pages = {
+        (source, page)
+        for source, pages in pages_by_source.items()
+        for page in pages
+        if page is not None
+    }
 
     return IndexSummary(
         lancedb_uri=lancedb_uri,
@@ -155,6 +160,12 @@ def summarize_index(
 
 
 def _table_names(db: Any) -> list[str]:
+    list_tables = getattr(db, "list_tables", None)
+    if callable(list_tables):
+        listing = list_tables()
+        tables = getattr(listing, "tables", None)
+        if tables is not None:
+            return sorted(str(name) for name in tables)
     names = db.table_names()
     return sorted(str(name) for name in names)
 

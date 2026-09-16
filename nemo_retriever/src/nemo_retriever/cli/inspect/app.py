@@ -20,6 +20,7 @@ from nemo_retriever.inspect import (
     summarize_index,
     summary_to_dict,
 )
+from nemo_retriever.inspect.summary import _table_names
 
 _FORMATS = ("pretty", "json", "html")
 
@@ -121,7 +122,7 @@ def inspect_command(
 def _print_tables(lancedb_uri: str) -> None:
     import lancedb
 
-    names = sorted(str(name) for name in lancedb.connect(lancedb_uri).table_names())
+    names = _table_names(lancedb.connect(lancedb_uri))
     if not names:
         typer.echo(f"No LanceDB tables found at {lancedb_uri!r}.")
         return
