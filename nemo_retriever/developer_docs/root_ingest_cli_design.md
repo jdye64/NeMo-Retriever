@@ -13,7 +13,6 @@ recall, or pipeline reporting.
 retriever ingest DOCUMENTS...          # default local graph ingest
 retriever ingest local DOCUMENTS...    # explicit local graph ingest
 retriever ingest batch DOCUMENTS...    # Ray/batch graph ingest
-retriever ingest service DOCUMENTS...  # remote service ingest
 ```
 
 The public CLI no longer exposes a root `--run-mode` flag. Local and batch still
@@ -28,17 +27,12 @@ mode's valid option set separate.
 | `retriever ingest DOCUMENTS...` | graph ingest | `IngestPlanRequest` | `run_mode="inprocess"` |
 | `retriever ingest local DOCUMENTS...` | graph ingest | `IngestPlanRequest` | `run_mode="inprocess"` |
 | `retriever ingest batch DOCUMENTS...` | graph ingest | `IngestPlanRequest` | `run_mode="batch"` |
-| `retriever ingest service DOCUMENTS...` | service ingest | `ServiceIngestPlanRequest` | `ServiceIngestor` client |
 
 Behavior intentionally preserved:
 
 - Local and batch use `resolve_ingest_plan(...)` and `run_ingest_workflow(...)`.
-- Service uses `resolve_service_ingest_request(...)` and
-  `run_service_ingest_workflow(...)`.
 - Dry-run still prints the resolved request/plan JSON for the selected mode.
 - Local and batch success summaries report files and LanceDB rows.
-- Service success summaries report files, service URL, and service-returned row
-  count when available.
 - Legacy stage and pipeline applications remain callable for compatibility but
   are hidden from root help while callers migrate.
 
@@ -47,21 +41,16 @@ Behavior intentionally changed:
 - Bare `retriever ingest DOCUMENTS...` now means local/in-process graph ingest.
 - Batch ingest is selected with `retriever ingest batch ...`, not
   `--run-mode batch`.
-- Service ingest is selected with `retriever ingest service ...`, not
-  `--run-mode service`.
-- Service-local invalid options are parser-level unknown options instead of
-  runtime-denied options.
 - Internal graph-stage selectors such as `use_page_elements` and
   `use_table_structure` are not public root CLI options.
 
 ## Why Not `--run-mode`
 
 `run_mode` is still the correct Python API and core graph concept. It is not the
-best user-facing CLI boundary because root ingest has two different ownership
-families:
+best user-facing CLI boundary because local and batch expose different option
+sets:
 
 - graph ingest: local and batch runtime modes for `GraphIngestor`
-- service ingest: a client for a remote `ServiceIngestor` service
 
 A single command with `--run-mode` has to mix graph-owned options and
 service-owned options in one help surface. Subcommands keep the ownership split
@@ -72,9 +61,6 @@ visible:
 - `retriever ingest batch ...` maps to graph `run_mode="batch"`.
 - `retriever ingest local ...` maps to graph `run_mode="inprocess"` and rejects
   batch-only Ray tuning before request construction.
-- `retriever ingest service ...` has a separate parser surface and cannot accept
-  LanceDB target flags, local NIM endpoint URLs, local embed backend flags, Ray
-  tuning, `--ocr-lang`, or local audio/video controls.
 
 This is separation of concerns, not loss of parity. The CLI maps to
 `run_mode="inprocess"` or `run_mode="batch"` at the graph boundary. The Python
@@ -133,17 +119,6 @@ retriever ingest batch docs/
   -> local LanceDB
 ```
 
-Service flow:
-
-```text
-retriever ingest service docs/
-  -> nemo_retriever.cli.ingest.service builds ServiceIngestPlanRequest
-  -> ingest.service.resolve_service_ingest_request(...)
-  -> nemo_retriever.cli.ingest_workflow.run_service_ingest_workflow(...)
-  -> ServiceIngestor client
-  -> remote retriever service
-```
-
 ## Handling The Large Option Surface
 
 The remaining flags are real public surface area, so the CLI keeps them visible.
@@ -196,24 +171,6 @@ before building `IngestPlanRequest`:
 - extraction tuning: PDF split/extract, page elements, OCR, table structure,
   Nemotron Parse workers, batch sizes, CPUs, GPUs
 - embedding tuning: embed workers, batch size, CPUs, GPUs
-
-Service ingest never receives those dataclasses and does not expose those
-options.
-
-## Service Mode
-
-`retriever ingest service` is a client for a running retriever service. The CLI
-does not expose `--lancedb-uri` or `--table-name` because service persistence is
-owned by the server deployment. The server decides its vector database through
-service configuration.
-
-Service mode exposes only the controls represented by
-`ServiceIngestPlanRequest`: connection settings, source/profile, service-side
-extract toggles, dedup, caption behavior, chunking, embed modality/granularity,
-image-store URI, dry-run, and quiet output.
-
-Service-backed query support belongs in the query CLI/service boundary, not in
-the ingest CLI.
 
 The supported command-line seam is `retriever ingest` for ingestion and
 `retriever query` for retrieval. Graph ingest paths reuse the canonical ingest

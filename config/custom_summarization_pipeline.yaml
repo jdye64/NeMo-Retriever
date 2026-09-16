@@ -7,20 +7,8 @@
 #   2. Mount it into your retriever service container
 #   3. Set INGEST_CONFIG_PATH in the service environment to point to this file
 #
-# Example Helm values fragment:
-#   service:
-#     extraVolumes:
-#       - name: custom-pipeline
-#         configMap:
-#           name: custom-pipeline
-#     extraVolumeMounts:
-#       - name: custom-pipeline
-#         mountPath: /config/custom_pipeline.yaml
-#         subPath: custom_pipeline.yaml
-#         readOnly: true
-#     env:
-#       - name: INGEST_CONFIG_PATH
-#         value: /config/custom_pipeline.yaml
+# Example: mount this file into the service container and set
+# INGEST_CONFIG_PATH to the mount path.
 
 name: "Custom Summarization Pipeline"
 description: "Pipeline with dedicated udf_parallel_helper stage for LLM summarization"

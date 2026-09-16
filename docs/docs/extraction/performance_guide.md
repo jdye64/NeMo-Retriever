@@ -8,7 +8,7 @@ Use this guide to document practical recommendations for:
 
 - Extraction throughput and latency tuning
 - Task-level settings (for example `extract`, `caption`, and `embed`)
-- Deployment-specific tuning for library mode and Kubernetes/Helm
+- Deployment-specific tuning for library ingest
 - NIM endpoint sizing and concurrency settings
 - Benchmarking methodology and repeatable test setups
 

@@ -36,11 +36,8 @@ from nemo_retriever.query.options import (
     QueryRequest,
     QueryRetrievalOptions,
     QueryRetrievalMode,
-    QueryServiceOptions,
     QueryStorageOptions,
-    ServiceQueryRequest,
 )
-from nemo_retriever.query.service import query_documents as query_service_documents
 
 _DEFAULT_COMMAND = "_local"
 _GROUP_OPTIONS = {"-h", "--install-completion", "--show-completion"}
@@ -67,8 +64,7 @@ class DefaultLocalQueryCommand(TyperCommand):
 app = typer.Typer(
     cls=DefaultLocalQueryGroup,
     help=(
-        "Query Retriever indexes. Use retriever query QUERY for LanceDB indexes produced by local or batch ingest, "
-        "or retriever query service QUERY for a service deployment."
+        "Query Retriever indexes. Use retriever query QUERY for LanceDB indexes produced by local or batch ingest."
     ),
     no_args_is_help=True,
 )
@@ -167,8 +163,7 @@ def _retrieval_options(
         "Embedding model: read from the selected table when available; "
         f"legacy tables fall back to {opts.DEFAULT_EMBED_MODEL}.\n\n"
         f"Default local reranker model when reranking: {opts.DEFAULT_RERANK_MODEL}.\n\n"
-        "For a service deployment, use retriever query service --help."
-    ),
+            ),
 )
 def _local_command(
     query: opts.QueryArgument,
@@ -335,41 +330,3 @@ def _local_command(
         raise typer.Exit(1) from exc
 
     _emit_query_output(hits, strategies=strategies, output_format=output_format, max_text_chars=max_text_chars)
-
-
-@app.command("service", help="Query a Retriever service deployment.")
-def _service_command(
-    query: opts.QueryArgument,
-    service_url: opts.ServiceUrlOption = "http://localhost:7670",
-    service_api_token: opts.ServiceApiTokenOption = None,
-    top_k: opts.TopKOption = 10,
-    candidate_k: opts.CandidateKOption = None,
-    page_dedup: opts.PageDedupOption = False,
-    content_types: opts.ContentTypesOption = None,
-    output_format: opts.OutputFormatOption = "hits",
-    max_text_chars: opts.MaxTextCharsOption = None,
-) -> None:
-    _validate_output_options(output_format, max_text_chars)
-    silence_noisy_libraries()
-    try:
-        with quiet_capture():
-            hits = query_service_documents(
-                ServiceQueryRequest(
-                    query=query,
-                    retrieval=_retrieval_options(
-                        top_k=top_k,
-                        candidate_k=candidate_k,
-                        page_dedup=page_dedup,
-                        content_types=content_types,
-                    ),
-                    service=QueryServiceOptions(
-                        service_url=service_url,
-                        service_api_token=service_api_token,
-                    ),
-                )
-            )
-    except ROOT_CLI_ERRORS as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-
-    _emit_query_output(hits, strategies=["semantic"], output_format=output_format, max_text_chars=max_text_chars)

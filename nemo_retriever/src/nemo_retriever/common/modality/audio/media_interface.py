@@ -32,8 +32,6 @@ except ImportError:
 
 VIDEO_CONTAINER_SUFFIXES: Tuple[str, ...] = (".mp4", ".mov", ".avi", ".mkv")
 MANUAL_FFMPEG_INSTALL_COMMAND = "apt-get update && apt-get install -y --no-install-recommends ffmpeg"
-CONTAINER_FFMPEG_INSTALL_ENV = "-e INSTALL_FFMPEG=true"
-HELM_FFMPEG_INSTALL_VALUE = "service.installFfmpeg=true"
 MEDIA_DEPENDENCIES: Tuple[str, ...] = ("ffmpeg-python", "ffmpeg", "ffprobe")
 FFMPEG_DEPENDENCIES: Tuple[str, ...] = ("ffmpeg-python", "ffmpeg")
 FFPROBE_DEPENDENCIES: Tuple[str, ...] = ("ffmpeg-python", "ffprobe")
@@ -95,10 +93,7 @@ def media_dependency_error_message(
     if "ffmpeg" in missing or "ffprobe" in missing:
         install_hints.append(
             "Install system FFmpeg with "
-            f"`{MANUAL_FFMPEG_INSTALL_COMMAND}`. "
-            "For the bundled service container, run with "
-            f"`docker run {CONTAINER_FFMPEG_INSTALL_ENV} ...`. "
-            f"For Helm deployments, set `{HELM_FFMPEG_INSTALL_VALUE}`."
+            f"`{MANUAL_FFMPEG_INSTALL_COMMAND}`."
         )
     hints_str = (" " + " ".join(install_hints)) if install_hints else ""
     return f"{component} requires media dependencies; missing: {missing_text}.{hints_str}"

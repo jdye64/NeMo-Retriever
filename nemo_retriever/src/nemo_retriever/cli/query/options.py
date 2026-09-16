@@ -247,15 +247,3 @@ AgenticLlmClientOption = Annotated[
         ),
     ),
 ]
-ServiceUrlOption = Annotated[
-    str,
-    typer.Option("--service-url", help="Base URL of the retriever service."),
-]
-ServiceApiTokenOption = Annotated[
-    str | None,
-    typer.Option(
-        "--service-api-token",
-        envvar="NEMO_RETRIEVER_API_TOKEN",
-        help="Bearer token for authenticating with the retriever service. Falls back to $NEMO_RETRIEVER_API_TOKEN.",
-    ),
-]

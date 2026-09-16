@@ -10,7 +10,6 @@ Concrete implementations are provided by runmodes:
 
 - inprocess: local Python process, no framework assumptions
 - batch: large-scale batch execution
-- service: remote ingestion service
 """
 
 from __future__ import annotations
@@ -55,20 +54,8 @@ def create_ingestor(
     else:
         parsed = IngestorCreateParams(**merged)
 
-    if run_mode == "service":
-        from nemo_retriever.service.service_ingestor import ServiceIngestor
-
-        service_kwargs: dict[str, Any] = {
-            "base_url": parsed.base_url,
-            "documents": parsed.documents,
-            "api_token": parsed.api_key,
-        }
-        if parsed.max_concurrency is not None:
-            service_kwargs["max_concurrency"] = parsed.max_concurrency
-        return ServiceIngestor(**service_kwargs)
-
     if run_mode not in {"batch", "inprocess"}:
-        raise ValueError(f"create_ingestor supports run modes 'inprocess', 'batch', and 'service'; got {run_mode!r}.")
+        raise ValueError(f"create_ingestor supports run modes 'inprocess' and 'batch'; got {run_mode!r}.")
 
     from nemo_retriever.ingestor.graph_ingestor import GraphIngestor
 
@@ -135,12 +122,7 @@ class ingestor:
         params: IngestExecuteParams | None = None,
         **kwargs: Any,
     ) -> Union[List[Any], Tuple[Any, ...]]:
-        """Execute the configured ingestion pipeline (placeholder).
-
-        In ``run_mode='service'``, ``return_results`` (default ``True``)
-        controls whether completed rows are fetched into
-        ``ServiceIngestResult.dataframe``.
-        """
+        """Execute the configured ingestion pipeline (placeholder)."""
         _ = _merge_params(params, kwargs)
         self._not_implemented("ingest")
 

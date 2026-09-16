@@ -9,7 +9,6 @@ import typer
 from typer.core import TyperCommand, TyperGroup
 
 from nemo_retriever.cli.ingest.graph_commands import _graph_ingest_command
-from nemo_retriever.cli.ingest.service import _service_command
 from nemo_retriever.cli.ingest.options import DEFAULT_CAPTION_MODEL, DEFAULT_EMBED_MODEL
 
 
@@ -40,7 +39,7 @@ app = typer.Typer(
         "Ingest documents into Retriever indexes. Use retriever ingest DOCUMENTS for the default local workflow. "
         "HTML, TXT, PDF, Office, image, audio, and video are input formats, not commands. "
         "CPU-only hosts use NVIDIA's hosted embedding endpoint when NVIDIA_API_KEY or NGC_API_KEY is set. "
-        "Use batch or service --help for those explicit modes."
+        "Use batch --help for Ray scale-out."
     ),
     no_args_is_help=True,
 )
@@ -55,8 +54,7 @@ app.command(
         "CPU-only hosts use NVIDIA's hosted embedding endpoint when NVIDIA_API_KEY or NGC_API_KEY is set.\n\n"
         f"Default embedding model: {DEFAULT_EMBED_MODEL}.\n\n"
         f"Default caption model when captioning: {DEFAULT_CAPTION_MODEL}.\n\n"
-        "For Ray scale-out options, use retriever ingest batch --help. "
-        "For a remote service, use retriever ingest service --help."
+        "For Ray scale-out options, use retriever ingest batch --help."
     ),
 )(_graph_ingest_command)
 app.command(
@@ -66,4 +64,3 @@ app.command(
         f"Default caption model when captioning: {DEFAULT_CAPTION_MODEL}."
     ),
 )(_graph_ingest_command)
-app.command("service")(_service_command)

@@ -31,7 +31,7 @@ from nemo_retriever.common.params.utils import (
 )
 from nemo_retriever.common.remote_auth import resolve_remote_api_key
 
-IngestorRunMode = Literal["inprocess", "batch", "service"]
+IngestorRunMode = Literal["inprocess", "batch"]
 
 # Pass as an api_key value to suppress auto-resolution from environment variables.
 # Example: EmbedParams(api_key=NO_API_KEY)
@@ -315,15 +315,10 @@ class IngestorCreateParams(_ParamsModel):
     ray_address: Optional[str] = None
     ray_log_to_driver: bool = True
     debug: bool = False
-    base_url: str = "http://localhost:7670"
     allow_no_gpu: bool = False
     node_overrides: Optional[dict[str, dict[str, Any]]] = None
     api_key: Optional[str] = None
     error_policy: Literal["raise", "collect"] = "raise"
-    # service run mode: maximum number of concurrent page uploads.  Lower
-    # values (e.g. 2-4) reduce burst pressure on Kubernetes NodePort /
-    # kube-proxy paths that otherwise reset connections under heavy load.
-    max_concurrency: Optional[int] = None
 
 
 class IngestExecuteParams(_ParamsModel):
@@ -398,7 +393,7 @@ class ASRParams(_ParamsModel):
     audio_endpoints: Tuple[Optional[str], Optional[str]] = (None, None)
     audio_infer_protocol: str = "grpc"
     # ``auto``: streaming (online) for NVCF; offline recognize for other gRPC
-    # endpoints (e.g. Helm Parakeet NIM with ``mode=ofl``).
+    # endpoints (e.g. a self-hosted Parakeet NIM with ``mode=ofl``).
     audio_infer_mode: Literal["auto", "online", "offline"] = "auto"
     function_id: Optional[str] = None
     auth_token: Optional[str] = None

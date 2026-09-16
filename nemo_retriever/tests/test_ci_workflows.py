@@ -8,7 +8,6 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 REUSABLE_PRE_COMMIT = "./.github/workflows/reusable-pre-commit.yml"
-REUSABLE_DOCKER_BUILD_AND_TEST = "./.github/workflows/reusable-docker-build-and-test.yml"
 THIS_FILE = Path(__file__).resolve()
 
 requires_workflows = pytest.mark.skipif(
@@ -112,88 +111,44 @@ def test_reusable_pre_commit_installs_uv_before_pre_commit():
 
 
 @requires_workflows
-def test_main_ci_uses_single_job_docker_build_and_test():
+def test_main_ci_has_no_docker_jobs():
     workflow = _load_workflow("ci-main.yml")
     jobs = workflow["jobs"]
 
+    assert set(jobs) == {"pre-commit"}
     assert "docker-build" not in jobs
     assert "docker-test" not in jobs
-
-    job = jobs["docker-build-and-test"]
-    assert job["name"] == "Build & Test Docker (amd64)"
-    assert job["uses"] == REUSABLE_DOCKER_BUILD_AND_TEST
-    assert job["with"] == {
-        "platform": "linux/amd64",
-        "target": "service",
-        "tags": "nrl-service:main-${{ github.sha }}",
-        "base-image": "ubuntu",
-        "base-image-tag": "jammy-20250415.1",
-        "test-selection": "full",
-        "pytest-markers": "not integration",
-        "coverage": True,
-        "runner": "linux-large-disk",
-    }
-    assert job["secrets"] == {
-        "HF_ACCESS_TOKEN": "${{ secrets.HF_ACCESS_TOKEN }}",
-    }
+    assert "docker-build-and-test" not in jobs
+    assert "docker-build-and-test-arm" not in jobs
+    assert "docker-build-and-push" not in jobs
 
 
 @requires_workflows
-def test_main_ci_builds_and_tests_arm64():
-    workflow = _load_workflow("ci-main.yml")
-
-    job = workflow["jobs"]["docker-build-and-test-arm"]
-    assert job["name"] == "Build & Test Docker (arm64)"
-    assert job["uses"] == REUSABLE_DOCKER_BUILD_AND_TEST
-    assert job["with"] == {
-        "platform": "linux/arm64",
-        "target": "service",
-        "tags": "nrl-service:main-arm64-${{ github.sha }}",
-        "base-image": "ubuntu",
-        "base-image-tag": "jammy-20250415.1",
-        "use-qemu": True,
-        "test-selection": "random",
-        "random-count": "100",
-        "pytest-markers": "not integration",
-        "coverage": False,
-        "runner": "linux-large-disk",
-    }
-
-
-@requires_workflows
-def test_main_ci_publishes_multi_arch_image_only_after_both_arch_tests():
-    workflow = _load_workflow("ci-main.yml")
-    job = workflow["jobs"]["docker-build-and-push"]
-
-    # Publishing a manifest list before the arm64 leg passes would ship an
-    # untested architecture to NGC.
-    assert "docker-build-and-test" in job["needs"]
-    assert "docker-build-and-test-arm" in job["needs"]
-
-    push_step = next(step for step in job["steps"] if step.get("name") == "Build and Push Multi-platform Image")
-    assert push_step["with"]["push"] is True
-    assert push_step["with"]["platforms"] == "linux/amd64,linux/arm64"
-    assert "nrl-service" in push_step["with"]["tags"]
-
-
-@requires_workflows
-def test_scheduled_nightly_publishes_arm64_in_manifest():
+def test_scheduled_nightly_has_no_docker_publish_job():
     workflow = _load_workflow("scheduled-nightly.yml")
-    job = workflow["jobs"]["docker-build-publish"]
-
-    push_step = next(step for step in job["steps"] if step.get("name") == "Build and Push Multi-platform Image")
-    assert push_step["with"]["push"] is True
-    assert push_step["with"]["platforms"] == "linux/amd64,linux/arm64"
+    assert "docker-build-publish" not in workflow["jobs"]
+    assert "skip-docker" not in workflow.get("on", {}).get("workflow_dispatch", {}).get("inputs", {})
 
 
 @requires_workflows
-def test_arm64_workflow_delegates_to_reusable_docker_build_and_test():
-    workflow = _load_workflow("docker-build-arm.yml")
-    job = workflow["jobs"]["build-and-test"]
+def test_perform_release_has_no_docker_jobs():
+    workflow = _load_workflow("perform-release.yml")
+    jobs = workflow["jobs"]
+    assert "nvingest-docker-build" not in jobs
+    assert "nvingest-docker-publish" not in jobs
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert "skip-docker" not in inputs
 
-    assert job["uses"] == REUSABLE_DOCKER_BUILD_AND_TEST
-    assert job["with"]["platform"] == "linux/arm64"
-    assert job["with"]["use-qemu"] is True
+
+@requires_workflows
+def test_service_docker_workflows_are_removed():
+    for name in (
+        "docker-build-arm.yml",
+        "docker-release-publish.yml",
+        "release-docker.yml",
+        "reusable-docker-build-and-test.yml",
+    ):
+        assert not (WORKFLOWS / name).exists(), name
 
 
 @requires_workflows
@@ -206,14 +161,8 @@ def test_workflows_do_not_pass_removed_random_selection_pytest_option():
 
 
 @requires_workflows
-def test_dockerfile_selects_cuda_apt_repo_by_architecture():
-    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-
-    # The cuda-keyring package pins apt to the repo directory it came from, so a
-    # hardcoded arch leaves the other architecture without an install candidate.
-    assert "repos/ubuntu2204/x86_64/cuda-keyring" not in dockerfile
-    assert "CUDA_REPO_ARCH=x86_64" in dockerfile
-    assert "CUDA_REPO_ARCH=sbsa" in dockerfile
+def test_dockerfile_is_removed_with_service_image():
+    assert not (REPO_ROOT / "Dockerfile").exists()
 
 
 @requires_workflows
@@ -328,14 +277,11 @@ def test_dev_compose_helpers_are_feature_scoped():
     assert "docker compose -f nemo_retriever/dev/compose/neo4j.compose.yaml up -d neo4j" in helper_readme.read_text(
         encoding="utf-8"
     )
+    assert "service-mode.compose.yaml" not in helper_readme.read_text(encoding="utf-8")
 
-    docker_doc = REPO_ROOT / "nemo_retriever" / "docker.md"
-    assert docker_doc.exists()
-    docker_doc_text = docker_doc.read_text(encoding="utf-8")
-    assert "--target service" in docker_doc_text
-    assert "retriever service start" in docker_doc_text
-    assert "docker compose" not in docker_doc_text.lower()
-    assert "docker-compose" not in docker_doc_text.lower()
+    assert not (REPO_ROOT / "nemo_retriever" / "docker.md").exists()
+    assert not (compose_dir / "service-mode.compose.yaml").exists()
+    assert not (compose_dir / "service-mode.local-models.compose.yaml").exists()
 
     skill_eval_config = (
         REPO_ROOT / "nemo_retriever" / "src" / "nemo_retriever" / "tools" / "skill_eval" / "configs" / "skill_eval.yaml"
@@ -348,21 +294,9 @@ def test_dev_compose_helpers_are_feature_scoped():
     assert "nemo_retriever/dev/compose/neo4j.compose.yaml" in neo4j_setup
 
 
-def test_default_service_mode_compose_wires_optional_collection_auth():
+def test_service_mode_compose_is_removed():
     compose_path = REPO_ROOT / "nemo_retriever" / "dev" / "compose" / "service-mode.compose.yaml"
-    compose_text = compose_path.read_text(encoding="utf-8")
-    compose_data = yaml.safe_load(compose_text)
-
-    retriever = compose_data["services"]["retriever"]
-    vectordb = compose_data["services"]["vectordb"]
-    assert retriever["environment"]["NRL_API_TOKEN"] == "${NRL_API_TOKEN:-}"
-    assert retriever["environment"]["NRL_INTERNAL_VDB_TOKEN"] == "${NRL_INTERNAL_VDB_TOKEN:-}"
-    assert vectordb["environment"]["NRL_INTERNAL_VDB_TOKEN"] == "${NRL_INTERNAL_VDB_TOKEN:-}"
-
-    service_config = compose_data["configs"]["retriever_service_config"]["content"]
-    assert 'api_token: "${NRL_API_TOKEN:-}"' in service_config
-    assert "allow_unscoped_dev: true" in service_config
-    assert "use_graphic_elements" not in service_config
+    assert not compose_path.exists()
 
 
 def test_legacy_tools_harness_is_removed():

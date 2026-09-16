@@ -36,18 +36,6 @@ def print_ingest_summary(summary: dict[str, Any]) -> None:
         typer.echo(json.dumps(summary, indent=2, sort_keys=True, default=str))
         return
 
-    if summary.get("run_mode") == "service":
-        n_files = len(summary["documents"])
-        service_target = summary["service_url"]
-        n_rows = summary.get("n_rows")
-        if n_rows is None:
-            typer.echo(
-                f"Ingested {n_files} file(s) through retriever service {service_target} " "(row count unavailable)."
-            )
-        else:
-            typer.echo(f"Ingested {n_files} file(s) → {n_rows} row(s) through retriever service {service_target}.")
-        return
-
     n_files = summary["n_documents"]
     table_path = f"{summary['lancedb_uri']}/{summary['table_name']}"
     n_rows = summary.get("n_rows")

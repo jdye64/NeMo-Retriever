@@ -7,8 +7,6 @@ For product-facing examples, prefer these commands:
 
 - `retriever ingest` - ingest supported documents and media into a Retriever index.
 - `retriever query` - query a local LanceDB table written by local or batch ingest.
-- `retriever query service` - query a Retriever service deployment.
-- `retriever service` - operate a Retriever service deployment.
 
 Format names and internal stages are not root commands. Use `retriever ingest`
 for PDF, HTML, TXT, image, Office, audio, and video inputs; it owns extraction,
@@ -27,7 +25,6 @@ Explicit modes are also available:
 ```bash
 retriever ingest local DOCUMENTS...
 retriever ingest batch DOCUMENTS...
-retriever ingest service DOCUMENTS...
 ```
 
 The root ingest CLI uses subcommands instead of a `--run-mode` flag. Choose
@@ -38,11 +35,9 @@ the command that matches where ingest runs and where results are stored.
 | `retriever ingest ...` | Local in-process ingest | local LanceDB | Default local ingest and CI/small corpus runs. |
 | `retriever ingest local ...` | Local in-process ingest | local LanceDB | Same as the default, but explicit. |
 | `retriever ingest batch ...` | Ray-backed batch ingest | local LanceDB | Larger or batch-tuned runs. |
-| `retriever ingest service ...` | Sends documents to a Retriever service | service-configured storage | Remote service ingest. |
 
 This separation keeps invalid flag combinations out of the parser. For example,
-service ingest does not expose LanceDB target flags, Ray tuning, local endpoint
-configuration, local embed backend selection, or local media controls.
+local ingest does not accept Ray worker-count flags that belong on `retriever ingest batch`.
 
 <!-- --8<-- [start:quickstart] -->
 
@@ -84,8 +79,8 @@ defaults.
 
 Python `.vdb_upload()` and default `Retriever()` use the same table.
 
-The plain `retriever query` examples below apply to local and batch ingest output
-written to LanceDB. Use `retriever query service` to query a Retriever service.
+The `retriever query` examples below apply to local and batch ingest output
+written to LanceDB.
 
 ### Ingest a larger corpus with batch mode
 
@@ -101,50 +96,6 @@ retriever ingest batch /path/to/your/pdfs \
 
 Batch mode exposes Ray runtime and batch tuning flags such as `--ray-address`,
 `--pdf-extract-workers`, `--ocr-workers`, and `--embed-workers`.
-
-### Ingest through a Retriever service
-
-Replace `/path/to/your/pdfs` with a directory of PDF files that you supply.
-
-```bash
-retriever ingest service /path/to/your/pdfs \
-  --service-url http://localhost:7670 \
-  --service-concurrency 8
-```
-
-Use `--service-api-token` or `NEMO_RETRIEVER_API_TOKEN` when the service requires
-a bearer token. Service ingest does not expose `--lancedb-uri`; the service
-configures its vector database. Query the service with:
-
-```bash
-retriever query service "What is in this corpus?" \
-  --service-url http://localhost:7670
-```
-
-
-### Start a local service with VectorDB
-
-Use `retriever service start --launch-vectordb` to run a local service with a supervised VectorDB child on `127.0.0.1:7671`. The child uses `nim_endpoints.embed_invoke_url` when configured. Otherwise, it uses local Hugging Face embedding when `local_models.enabled` and `local_models.embed.enabled` are both `true`. The command waits for VectorDB readiness and terminates the child when the service exits. If the child does not exit promptly, the service forcefully stops it. You can set the same behavior in YAML with `vectordb.launch_on_start: true` and a loopback `vectordb.vectordb_url`.
-
-The child inherits credentials from the service environment. Set `NVIDIA_API_KEY` or `NGC_API_KEY` for remote embedding, and set `NRL_INTERNAL_VDB_TOKEN` or `NRL_INTERNAL_VDB_TOKEN_FILE` for the VectorDB internal credential. Do not place credentials in the service YAML.
-
-For a fully local deployment, use a CUDA-capable host and install the service and local extras. Install the `multimedia` extra when you ingest audio or video.
-
-```bash
-pip install "nemo-retriever[service,local]"
-scripts/launch_local_service_with_vectordb.sh \
-  nemo_retriever/examples/retriever-service.local.yaml
-```
-
-The example configuration leaves NIM endpoints unset and uses local Hugging Face models. The launcher validates `/v1/health` on the service and VectorDB, then keeps both processes running until you stop it with `Ctrl+C`.
-
-```bash
-retriever service start --config my-retriever-service.yaml --launch-vectordb
-```
-
-Use the command above when `nim_endpoints.embed_invoke_url` is configured. Omit the flag to use an existing VectorDB. Helm continues to deploy VectorDB as a separate pod.
-
-If VectorDB exits during startup or does not become ready, inspect the VectorDB output in the terminal that started the service. Verify the VectorDB configuration, embedding model setup and credentials, writable LanceDB directory, and that port `7671` is available.
 
 ### Route ingest to hosted or self-hosted NIM endpoints
 
@@ -188,7 +139,7 @@ with `sk-` rejects NVIDIA `nvapi-` keys and NGC keys.
 
 ### Query result controls
 
-Both `retriever query` and `retriever query service` return compact JSON hits
+`retriever query` returns compact JSON hits
 with `source`, `page_number`, and `text`. Use `--candidate-k`, `--page-dedup`,
 and `--content-types` to control how results are selected after vector
 retrieval:
@@ -202,7 +153,7 @@ retriever query "annual revenue by region" \
 
 `--top-k` is the final number of results to return after filtering and
 deduplication. `--candidate-k` is the number of raw results to retrieve from
-LanceDB or the Retriever service before filtering, page deduplication, and
+LanceDB before filtering, page deduplication, and
 final truncation. If omitted, the candidate pool is the same size as
 `--top-k`. Set `--candidate-k` larger than `--top-k` when page deduplication
 or content-type filtering might remove too many of the nearest retrieved rows.
@@ -211,7 +162,7 @@ It must always be greater than or equal to `--top-k`.
 Page deduplication and content-type filtering are applied after vector
 retrieval, preserving retriever ranking order and truncating the final output to
 `--top-k`. Local and batch ingest record the canonical embedding model on the
-LanceDB table, and non-service query uses that model automatically. Use
+LanceDB table, and query uses that model automatically. Use
 `--embed-model-name` only as an explicit override or when querying a legacy or
 third-party table without model metadata. If the explicit model differs from
 the model recorded on the table, the query logs a warning that names both
@@ -230,8 +181,7 @@ are intentionally not persisted on the table.
 captioned image rows emitted by ingest. This option filters by content-type
 metadata only; it does not filter by source, page, or other metadata
 predicates. Hits with missing or unknown content-type metadata are excluded
-while `--content-types` is active. In service mode, results must include
-content-type metadata to match this filter. Default display values in the JSON
+while `--content-types` is active. Default display values in the JSON
 output are not used for content-type matching.
 
 ### Agentic retrieval
@@ -402,24 +352,6 @@ Batch-only options include `--ray-address`, `--ray-log-to-driver`,
 `--table-structure-workers`, `--nemotron-parse-workers`, `--embed-workers`, and
 related batch-size / CPU / GPU tuning flags.
 
-### Service ingest
-
-`retriever ingest service` exposes only service-supported request controls.
-It does not expose LanceDB target flags, Ray tuning, local endpoint URLs/API
-keys, local embed backend selection, `--ocr-lang`, or local audio/video media
-controls.
-
-| Option | Default | Notes |
-|---|---|---|
-| `DOCUMENTS...` | required | Files, directories, or shell globs sent to the service client. |
-| `--service-url` | `http://localhost:7670` | Retriever service base URL. |
-| `--service-concurrency` | `8` | Maximum concurrent document uploads. |
-| `--service-api-token` | env fallback | Bearer token; also reads `NEMO_RETRIEVER_API_TOKEN`. |
-| `--profile` | `auto` | Same profile names as local and batch ingest where supported. |
-| `--caption`, `--dedup`, `--text-chunk` | off | Service-supported ingest controls. |
-| `--store-images-uri` | unset | Service-accessible image storage URI. |
-| `--dry-run` | off | Print the resolved service ingest request. Tokens are redacted. |
-
 ## Examples
 
 ### Custom LanceDB location
@@ -509,7 +441,7 @@ retriever query "What is in this corpus?" \
 
 Hugging Face remains the local query backend for non-ModelOpt checkpoints.
 Local directories must contain `config.json`, and their absolute path must be
-available to every Ray worker or service replica that loads the model.
+available to every Ray worker that loads the model.
 
 ### PDF extraction method
 
@@ -592,12 +524,5 @@ Local and batch ingest report the number of input files and LanceDB rows written
 Ingested 20 file(s) -> 1884 row(s) in LanceDB lancedb/nemo-retriever.
 ```
 
-Service ingest reports the row count returned by the service result when
-available:
-
-```text
-Ingested 20 file(s) -> 1940 row(s) through retriever service http://localhost:7670.
-```
-
 Use `--dry-run` on any ingest mode to inspect the resolved request without
-creating an ingestor or contacting the service.
+creating an ingestor.

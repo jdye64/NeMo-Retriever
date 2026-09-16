@@ -138,11 +138,7 @@ def run_command(
     output_dir: Annotated[str | None, typer.Option("--output-dir", help="Directory for run artifacts.")] = None,
     run_id: Annotated[str | None, typer.Option("--run-id", help="Stable run identifier.")] = None,
     mode: Annotated[
-        str | None, typer.Option("--mode", help="System-under-test mode: local, batch, or service.")
-    ] = None,
-    service_endpoint: Annotated[
-        str | None,
-        typer.Option("--service-endpoint", help="Machine-local Retriever service URL for service mode."),
+        str | None, typer.Option("--mode", help="System-under-test mode: local or batch.")
     ] = None,
     set_values: Annotated[
         list[str] | None,
@@ -201,7 +197,6 @@ def run_command(
             overrides=set_values or (),
             requirements=requirements or (),
             dry_run=dry_run,
-            service_endpoint=service_endpoint,
             runfile_payload=runfile_payload,
             runfile_path=runfile_path,
         )
@@ -225,7 +220,7 @@ def run_command(
 def run_set_command(
     runset: Annotated[str, typer.Argument(help="Runset name.")],
     output_dir: Annotated[str | None, typer.Option("--output-dir", help="Directory for session artifacts.")] = None,
-    mode: Annotated[str, typer.Option("--mode", help="System-under-test mode: local, batch, or service.")] = "local",
+    mode: Annotated[str, typer.Option("--mode", help="System-under-test mode: local or batch.")] = "local",
     set_values: Annotated[
         list[str] | None,
         typer.Option("--set", help="Apply a small KEY=VALUE override to every run. Repeatable."),
@@ -281,13 +276,6 @@ def run_files_command(
         str | None,
         typer.Option("--mode", help="Override system-under-test mode for every runfile."),
     ] = None,
-    service_endpoint: Annotated[
-        str | None,
-        typer.Option(
-            "--service-endpoint",
-            help="Machine-local Retriever service URL, applied only to service-mode runfiles.",
-        ),
-    ] = None,
     set_values: Annotated[
         list[str] | None,
         typer.Option("--set", help="Apply a small KEY=VALUE override to every run. Repeatable."),
@@ -310,7 +298,6 @@ def run_files_command(
             session_name=session_name,
             dataset_paths_file=dataset_paths,
             mode=mode,
-            service_endpoint=service_endpoint,
             overrides=set_values or (),
             requirements=requirements or (),
             dry_run=dry_run,
@@ -328,37 +315,6 @@ def run_files_command(
         typer.echo(f"Runfile session failed with exit code {outcome.exit_code}", err=True)
         typer.echo(f"Session artifacts: {outcome.artifact_dir}", err=True)
     raise typer.Exit(code=outcome.exit_code)
-
-
-@app.command("run-helm")
-def run_helm_command(
-    runfiles: Annotated[list[Path], typer.Argument(help="Runfile paths to execute as one managed Helm session.")],
-    config: Annotated[Path, typer.Option("--config", help="Non-secret Helm deployment YAML.")],
-    output_dir: Annotated[Path, typer.Option("--output-dir", help="Portable run-files session directory.")],
-    dataset_paths: Annotated[
-        Path | None,
-        typer.Option(
-            "--dataset-paths",
-            help="Machine-local YAML file that maps registered datasets to document and query paths.",
-        ),
-    ] = None,
-    session_name: Annotated[str, typer.Option("--session-name", help="Stable session label.")] = "helm_service",
-) -> None:
-    """Provision a Helm service around one portable run-files session."""
-    from nemo_retriever.harness.helm_runner import run_helm_session
-
-    try:
-        exit_code = run_helm_session(
-            config,
-            runfiles,
-            output_dir=output_dir,
-            session_name=session_name,
-            dataset_paths=dataset_paths,
-        )
-    except (OSError, ValueError) as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=EXIT_INVALID) from exc
-    raise typer.Exit(code=exit_code)
 
 
 @app.command("post-slack")

@@ -15,11 +15,9 @@ observe one or more of the following:
 - `GraphIngestionError` for row-level failures from explicitly configured
   remote NIM stages in `run_mode="inprocess"` or `"batch"` when
   `error_policy="raise"` (the default).
-- HTTP status codes or gRPC errors returned by a remote NIM or by the
-  Retriever service. These are transport or upstream-service statuses, not
-  NeMo Retriever-specific error codes.
-- Per-document failures in `ServiceIngestResult.failures` when
-  `run_mode="service"`.
+- HTTP status codes or gRPC errors returned by a remote NIM. These are
+  transport or upstream-service statuses, not NeMo Retriever-specific
+  error codes.
 
 The generated API signatures and parameter models below are the API contract.
 Exception text and upstream response bodies can change between releases; do
@@ -75,8 +73,7 @@ application inspects the error fields in every returned row. Alternatively,
 pass `return_failures=True` to `.ingest()` to receive a `(result, failures)`
 tuple. When no remote invoke URL is configured, `return_failures=True` scans
 all output columns for row-level error fields so local failures are still
-visible. In service mode, failures are also available from
-`ServiceIngestResult.failures`.
+visible.
 
 ### What the raise error policy covers
 
@@ -183,7 +180,7 @@ Large PDFs are split into page batches before Ray processing so extraction can r
 
 To tune splitter throughput from the CLI, use `--pdf-split-batch-size` (Ray actor batch size for the splitter stage). Refer to [Local and batch ingest](https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever/docs/cli#local-and-batch-ingest) in the CLI reference.
 
-**Python client (`pdf_split_config`):** Only [`ServiceIngestor.pdf_split_config()`](#service-ingestor) records page-chunking settings in the request pipeline spec for the remote gateway. Obtain that object with `create_ingestor(run_mode="service")`. Local graph ingest (`run_mode="inprocess"` or `"batch"`) does not implement this method. PDFs are split automatically on the default graph ingest path without client-side configuration.
+**Python client:** Local graph ingest (`run_mode="inprocess"` or `"batch"`) splits PDFs automatically on the default graph ingest path without a client-side `pdf_split_config` method.
 
 ## One-shot text generation { #one-shot-text-generation }
 
@@ -286,7 +283,6 @@ Use the following public import paths:
 
 - Import `create_ingestor` and `GraphIngestionError` from `nemo_retriever`.
 - Import `GraphIngestor` from `nemo_retriever.ingestor.graph_ingestor`.
-- Import `ServiceIngestor` from `nemo_retriever.service.service_ingestor`.
 - Import generation operators from `nemo_retriever.operators.generation`.
 - Import LLM client, task, and result types from `nemo_retriever.models.llm`.
 - Import parameter models from `nemo_retriever.common.params`.
@@ -295,24 +291,22 @@ Use the following public import paths:
 
 ### Public ingestion factory { #public-ingestion-factory }
 
-`create_ingestor()` returns a concrete ingestion client from `run_mode`. The supported values are `inprocess`, `batch`, and `service`.
+`create_ingestor()` returns a `GraphIngestor` from `run_mode`. The supported values are `inprocess` and `batch`.
 
 | `run_mode` | Runtime type | Execution |
 | --- | --- | --- |
 | `inprocess` | `GraphIngestor` | Local in-process graph. This is the default. |
 | `batch` | `GraphIngestor` | Ray Data graph. |
-| `service` | `ServiceIngestor` | Remote Retriever service. |
 
-The function is annotated as returning the shared `Ingestor` interface. At runtime it returns `GraphIngestor` or `ServiceIngestor`. Use the generated class entries below for run-mode-specific methods.
+The function is annotated as returning the shared `Ingestor` interface. At runtime it returns `GraphIngestor`. Use the generated class entries below for graph methods.
 
-Factory keyword arguments merge into `IngestorCreateParams`. Common fields include `documents`, `base_url`, `api_key`, `error_policy`, `ray_address`, and `max_concurrency`. Refer to `IngestorCreateParams` in [Parameter models](#generated-parameter-models).
+Factory keyword arguments merge into `IngestorCreateParams`. Common fields include `documents`, `error_policy`, and `ray_address`. Refer to `IngestorCreateParams` in [Parameter models](#generated-parameter-models).
 
 ```python
 from nemo_retriever import GraphIngestionError, create_ingestor
 
 graph = create_ingestor(run_mode="inprocess")
 batch = create_ingestor(run_mode="batch")
-service = create_ingestor(run_mode="service", base_url="http://localhost:7670")
 ```
 
 ::: nemo_retriever.ingestor.core.create_ingestor
@@ -338,63 +332,6 @@ service = create_ingestor(run_mode="service", base_url="http://localhost:7670")
 ::: nemo_retriever.ingestor.graph_ingestor.GraphIngestionError
     options:
       heading_level: 4
-      show_docstring_description: false
-
-### Service ingest { #service-ingestor }
-
-`create_ingestor(run_mode="service")` returns `ServiceIngestor`. Import the class from `nemo_retriever.service.service_ingestor`. `ingest()` returns `ServiceIngestResult`.
-
-Service-only methods include `split()`, `pdf_split_config()`, `save_to_disk()`, `ingest_stream()`, `aingest_stream()`, and `cancel()`. `cancel()` is part of the public class. It currently raises `NotImplementedError` because the service does not expose a cancel endpoint.
-
-#### Choose a service result schema { #service-result-schema }
-
-`ServiceIngestor.ingest()` returns result rows in the `legacy` schema by
-default. You can pass `result_schema="compact"` to use the compact schema.
-The schemas return text and embeddings as follows.
-
-| Schema | Text | Embeddings |
-| --- | --- | --- |
-| `legacy` | Ordinary string values are not truncated. | Pass `return_embeddings=True` to preserve embedding payloads in their legacy columns and nested fields. |
-| `compact` | The top-level `text` field preserves the complete extracted text. | Pass `return_embeddings=True` to add a top-level `embedding` field when the source row contains an embedding. |
-
-For legacy rows, the service preserves extracted text and string-valued
-metadata in full, including returned strings nested in table, chart,
-infographic, and image results. Raw images and embeddings remain opt-in.
-Arrays, binary values, and oversized non-text collections remain summarized.
-
-The default `return_embeddings=False` omits the top-level `embedding` field
-from compact rows. This default keeps the compact response shape and payload
-size unchanged. When you configure `EmbedParams.output_column`, compact rows
-read the embedding from that column and normalize it to the top-level
-`embedding` field. Raw image payloads remain available only in legacy rows
-when you pass `return_images=True`.
-
-The following example requests compact rows with their embeddings.
-
-```python
-from nemo_retriever import create_ingestor
-
-result = (
-    create_ingestor(run_mode="service", base_url="http://localhost:7670")
-    .texts(["Text to embed and return."])
-    .embed()
-    .ingest(result_schema="compact", return_embeddings=True)
-)
-
-for row in result.dataframe.to_dict(orient="records"):
-    print(row["text"], row.get("embedding"))
-```
-
-::: nemo_retriever.service.service_ingestor.ServiceIngestor
-    options:
-      heading_level: 4
-      docstring_style: numpy
-      show_docstring_description: false
-
-::: nemo_retriever.service.service_ingestor.ServiceIngestResult
-    options:
-      heading_level: 4
-      docstring_style: numpy
       show_docstring_description: false
 
 ### Retrieve { #generated-retrieve-api }

@@ -100,7 +100,7 @@ def test_merge_params_with_model_copy_updates_values() -> None:
 
 
 def test_create_ingestor_parses_kwargs_and_returns_graph_ingestor() -> None:
-    ingestor = create_ingestor(run_mode="inprocess", documents=["doc.pdf"], base_url="http://example:7670")
+    ingestor = create_ingestor(run_mode="inprocess", documents=["doc.pdf"])
     assert isinstance(ingestor, GraphIngestor)
     assert ingestor._run_mode == "inprocess"
     assert ingestor._documents == ["doc.pdf"]
@@ -127,17 +127,14 @@ def test_create_ingestor_rejects_unknown_run_modes() -> None:
         create_ingestor(run_mode="parallel")  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("run_mode", ["inprocess", "batch", "service"])
+@pytest.mark.parametrize("run_mode", ["inprocess", "batch"])
 @pytest.mark.parametrize("input_method", [None, "files", "texts", "buffers"])
 def test_ingest_requires_input_sources(
     run_mode: str,
     input_method: str | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    create_kwargs = {"run_mode": run_mode}
-    if run_mode == "service":
-        create_kwargs["base_url"] = "http://retriever.example"
-    ingestor = create_ingestor(**create_kwargs)
+    ingestor = create_ingestor(run_mode=run_mode)
     if input_method is not None:
         getattr(ingestor, input_method)([])
 
@@ -146,12 +143,6 @@ def test_ingest_requires_input_sources(
             ingestor,
             "_ensure_batch_runtime",
             lambda: pytest.fail("input validation must run before starting Ray"),
-        )
-    elif run_mode == "service":
-        monkeypatch.setattr(
-            ingestor,
-            "ingest_stream",
-            lambda **kwargs: pytest.fail("input validation must run before contacting the service"),
         )
     else:
         monkeypatch.setattr(

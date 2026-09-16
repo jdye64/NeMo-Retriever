@@ -245,7 +245,7 @@ def test_error_message_falls_back_to_generic_hint_without_status_code() -> None:
     )
     rendered = str(err)
     assert "Troubleshooting:" in rendered
-    assert "kubectl exec" in rendered
+    assert "curl -sS" in rendered
     assert "http://ocr.svc/v1/infer" in rendered
 
 

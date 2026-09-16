@@ -19,7 +19,6 @@ from nemo_retriever.common.vdb.adt_vdb import (
     CollectionWriteResult,
     VDB,
 )
-from nemo_retriever.service.services.pipeline_pool import DocumentWriteContext, WorkItem
 
 
 class IncompleteVDB(VDB):
@@ -159,28 +158,3 @@ def test_job_idempotency_fingerprint_is_unchanged_by_the_enum() -> None:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     assert _digest(fingerprint_input) == _digest(literal_input)
-
-
-def test_work_item_rebuilds_the_write_context_from_a_broker_claim() -> None:
-    """``RichModel`` ignores unknown keys, so the nested key must survive intact."""
-    original = DocumentWriteContext(
-        scope="workspace",
-        collection_name="research",
-        operation=IngestOperation.REPLACE,
-        content_sha256="a" * 64,
-        storage_document_id="document-1",
-    )
-
-    claim_extra = {"write": original.model_dump(mode="json")}
-    rebuilt = WorkItem(id="attempt-1", **claim_extra)
-
-    assert rebuilt.write == original
-    assert rebuilt.write.operation is IngestOperation.REPLACE
-    assert rebuilt.write.storage_document_id == "document-1"
-
-
-def test_work_item_write_context_falls_back_to_the_attempt_id() -> None:
-    item = WorkItem(id="attempt-1")
-
-    assert item.write.resolved(fallback_document_id=item.id).storage_document_id == "attempt-1"
-    assert item.write.resolved(fallback_document_id=item.id).operation is IngestOperation.APPEND

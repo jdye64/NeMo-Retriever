@@ -17,7 +17,7 @@ from opentelemetry.trace import StatusCode
 from nemo_retriever.models.nim.primitives.nim_client import NimClient as InternalNimClient
 from nemo_retriever.models.nim.nim import NIMClient as HttpNIMClient
 from nemo_retriever.models.nim.nim import _post_with_retries
-from nemo_retriever.service import tracing
+from nemo_retriever.common import tracing
 
 
 class _CollectingExporter:
@@ -48,10 +48,10 @@ def exported_spans(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     monkeypatch.setenv("OTEL_TRACES_EXPORTER", "otlp")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel:4317")
     monkeypatch.setattr(
-        "nemo_retriever.service.tracing.OTLPSpanExporter",
+        "nemo_retriever.common.tracing.OTLPSpanExporter",
         lambda *args, **kwargs: _CollectingExporter(exported),
     )
-    monkeypatch.setattr("nemo_retriever.service.tracing.BatchSpanProcessor", SimpleSpanProcessor)
+    monkeypatch.setattr("nemo_retriever.common.tracing.BatchSpanProcessor", SimpleSpanProcessor)
     assert tracing.configure_tracing(service_role="standalone") is True
     return exported
 

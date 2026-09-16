@@ -29,12 +29,6 @@ __all__ = [
     "GraphIngestionError",
     "ingestor",
     "retriever",
-    "RetrieverServiceCompatibilityError",
-    "RetrieverServiceClient",
-    "RetrieverServiceError",
-    "RetrieverServiceNotFoundError",
-    "RetrieverServiceConflictError",
-    "RetrieverServiceValidationError",
     "CollectionInfo",
     "CollectionDeleteResult",
     "CollectionPage",
@@ -68,30 +62,6 @@ def __getattr__(name: str):
         from nemo_retriever.ingestor.graph_ingestor import GraphIngestionError
 
         return GraphIngestionError
-    if name in {
-        "RetrieverServiceClient",
-        "RetrieverServiceCompatibilityError",
-    }:
-        from nemo_retriever.service.client import RetrieverServiceClient, RetrieverServiceCompatibilityError
-
-        return {
-            "RetrieverServiceClient": RetrieverServiceClient,
-            "RetrieverServiceCompatibilityError": RetrieverServiceCompatibilityError,
-        }[name]
-    if name in {
-        "RetrieverServiceError",
-        "RetrieverServiceNotFoundError",
-        "RetrieverServiceConflictError",
-        "RetrieverServiceValidationError",
-    }:
-        from nemo_retriever.service.errors import (
-            RetrieverServiceConflictError,
-            RetrieverServiceError,
-            RetrieverServiceNotFoundError,
-            RetrieverServiceValidationError,
-        )
-
-        return locals()[name]
     if name in {
         "CollectionInfo",
         "CollectionDeleteResult",

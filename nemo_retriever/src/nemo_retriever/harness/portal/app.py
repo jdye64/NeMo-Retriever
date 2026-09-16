@@ -2229,11 +2229,7 @@ async def trigger_run(req: TriggerRequest):
     )
 
     if req.run_mode == "service":
-        merged_overrides["run_mode"] = "service"
-        if req.service_url:
-            merged_overrides["service_url"] = req.service_url
-        if req.service_max_concurrency:
-            merged_overrides["service_max_concurrency"] = req.service_max_concurrency
+        raise HTTPException(400, "Retriever service mode was removed. Use local or batch harness runs.")
 
     base_job: dict[str, Any] = {
         "dataset": req.dataset,

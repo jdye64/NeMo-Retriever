@@ -9,7 +9,7 @@ MkDocs config and redirects live in `docs/mkdocs.yml`.
 - Write clear, accurate, task-oriented documentation for developers who install, configure, and run NeMo Retriever Library.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
-- Verify commands, defaults, API names, and behavior against checked-in source, tests, Helm values, or CLI help.
+- Verify commands, defaults, API names, and behavior against checked-in source, tests, or CLI help.
 - Use existing documentation, issues, and PRs to locate claims and rationale, not as behavior authority.
 - Keep product naming consistent: **NeMo Retriever Library** (NRL). Avoid reintroducing NV-Ingest as the current product name except in historical release-note context.
 
@@ -64,7 +64,7 @@ Apply these rules to documentation, examples, headings, UI text, and release not
 ### NRL documentation patterns
 
 - Prefer end-to-end examples that include `.ingest()` when showing `create_ingestor` / `GraphIngestor` usage, unless the page intentionally stops before ingest for inspection.
-- Keep Helm, CLI, and Python guidance aligned with current `main` defaults. Soften or omit claims until code matches.
+- Keep CLI and Python guidance aligned with current `main` defaults. Soften or omit claims until code matches.
 - For NIM catalogs and build links, prefer the support matrix and topic pages over inventing new tables.
 - Preserve MkDocs redirects in `docs/mkdocs.yml` when renaming or retiring pages.
 - On documentation PRs, change what readers are told, not what the library does by default, unless the user explicitly requests eng work.

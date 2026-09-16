@@ -37,7 +37,6 @@ NeMo Retriever Library supports uploading data through `.vdb_upload()` on `creat
 
 - **Python SDK ingest** (`.vdb_upload()` on `create_ingestor(...)`) persists embeddings to LanceDB with default URI `lancedb` and default table `nemo-retriever`. Default `Retriever()` queries that same table.
 - **Local and batch CLI ingest** (`retriever ingest`, `retriever ingest local`, `retriever ingest batch`) persist embeddings to LanceDB (default URI `lancedb`, table `nemo-retriever`).
-- **Service CLI ingest** (`retriever ingest service`) writes to service-configured storage.
 
 The Python SDK and the local CLI share the same LanceDB default table. Pass an explicit URI and table name at ingest and at query time only when you need a non-default location.
 
@@ -186,7 +185,7 @@ Refer to the [metadata filtering notebook](https://github.com/NVIDIA/NeMo-Retrie
 |---------------------|----------------------------------------------|
 | Runtime model       | Embedded (in-process)                        |
 | External services   | None for the vector store itself             |
-| Helm / extra stack  | Not required for LanceDB (default path)      |
+| Extra stack         | Not required for LanceDB (default path)      |
 | Index type          | IVF_HNSW_SQ (default)                        |
 | Persistence         | Lance files on disk under your configured URI |
 
@@ -216,11 +215,11 @@ To integrate another vector database, subclass [`VDB`](https://github.com/NVIDIA
 
 ### RAG Blueprint and partner vector stores { #rag-blueprint-and-partner-vector-stores }
 
-Some deployments use a different vector store than the default LanceDB path on this page—for example the [NVIDIA RAG Blueprint](https://docs.nvidia.com/rag/latest/index.html) (Docker Compose or Helm) or a partner package that subclasses the same [`VDB`](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/src/nemo_retriever/common/vdb/adt_vdb.py) interface. Use the following public references when you wire those stacks to ingestion and retrieval:
+Some deployments use a different vector store than the default LanceDB path on this page—for example the [NVIDIA RAG Blueprint](https://docs.nvidia.com/rag/latest/index.html) (Docker Compose) or a partner package that subclasses the same [`VDB`](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/src/nemo_retriever/common/vdb/adt_vdb.py) interface. Use the following public references when you wire those stacks to ingestion and retrieval:
 
 | Vector store | Where to configure or implement |
 |--------------|--------------------------------|
-| **[Elasticsearch](https://www.elastic.co/elasticsearch)** | [Configure Elasticsearch as Your Vector Database for NVIDIA RAG Blueprint](https://docs.nvidia.com/rag/latest/change-vectordb.html) — compose profiles, environment variables, and Helm notes for the RAG Blueprint. |
+| **[Elasticsearch](https://www.elastic.co/elasticsearch)** | [Configure Elasticsearch as Your Vector Database for NVIDIA RAG Blueprint](https://docs.nvidia.com/rag/latest/change-vectordb.html) — compose profiles and environment variables for the RAG Blueprint. |
 | **[Pinecone](https://www.pinecone.io/)** | [Pinecone Configuration for Pinecone Enterprise RAG Blueprint](https://github.com/pinecone-io/nvidia-rag/blob/main/docs/pinecone-configuration.md) in the [`pinecone-io/nvidia-rag`](https://github.com/pinecone-io/nvidia-rag) repository. |
 | **[Teradata](https://www.teradata.com/)** | [TeradataVDB (NVIDIA NIM Ingest integration)](https://docs.teradata.com/r/VMware/Teradata-Package-for-Generative-AI-Function-Reference/Vector-Store/NVIDIA-NIM-Ingest-Integration/TeradataVDB) — `teradatagenai.vector_store.teradataVDB.TeradataVDB` implements the NeMo Retriever ingestion `VDB` abstract class for Teradata Vector Store. |
 

@@ -3,8 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Backwards-compatible re-export.
 
-Evidence shaping moved to :mod:`nemo_retriever.query.evidence` so the service
-``/v1/query`` endpoint can reuse it without the service depending on ``cli``.
+Evidence shaping lives in :mod:`nemo_retriever.query.evidence`.
 Import from there directly in new code.
 """
 
