@@ -4,7 +4,7 @@ Use this page for speech and audio extraction with Parakeet ASR and for video wo
 
 For air-gapped or disconnected deployments, refer to [Air-gapped and disconnected deployment](deployment-options.md#air-gapped-deployment).
 
-**Sections:** [Speech and audio (Parakeet)](#speech-and-audio-extraction) · [Run a self-hosted Parakeet NIM](#run-a-self-hosted-parakeet-nim) · [Parakeet with hosted inference (build.nvidia.com)](#parakeet-hosted-inference-build-nvidia) · [Video and frame OCR](#video-and-frame-ocr)
+**Sections:** [Speech and audio (Parakeet)](#speech-and-audio-extraction) · [Run a self-hosted Parakeet NIM](#run-parakeet-self-hosted) · [Parakeet with hosted inference (build.nvidia.com)](#parakeet-hosted-inference-build-nvidia) · [Video and frame OCR](#video-and-frame-ocr)
 
 ## Speech and audio extraction { #speech-and-audio-extraction }
 
