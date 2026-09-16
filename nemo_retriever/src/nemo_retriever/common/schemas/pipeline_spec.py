@@ -2,28 +2,12 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Per-request pipeline configuration shipped from client → server.
+"""Per-request pipeline configuration for ingest job requests.
 
-``PipelineSpec`` is the wire-format mirror of the fluent state accumulated by
-``ServiceIngestor``. Today's worker pipeline is fixed at service startup
-(``pipeline_executor._make_work_fn`` bakes ``ExtractParams`` / ``EmbedParams``
-into a closure); ``PipelineSpec`` lets a client request **different** stage
-configuration on a per-document basis while the server retains absolute
-control over trust-sensitive fields (NIM endpoint URLs, API keys, storage
-allowlists, webhook destinations, …).
-
-The contract is:
-
-* Clients populate fields they want to *override* — fields left ``None``
-  defer to ``ServiceConfig.nim_endpoints`` and the bundled defaults.
-* The server merges ``ServiceConfig.nim_endpoints`` (URLs + api_key)
-  **after** validating the client spec, so a tenant cannot redirect the
-  pipeline's GPU traffic.
-* ``stage_order`` controls **post-extraction** stage ordering only;
-  extraction is always first.
-
-The spec is transported inside the existing ``metadata`` form field of
-``POST /v1/ingest`` so no breaking API change is required.
+``PipelineSpec`` records stage overrides such as extract, embed, and storage
+parameters. Fields left ``None`` keep caller or runtime defaults.
+``stage_order`` controls post-extraction stage ordering only; extraction is
+always first.
 """
 
 from __future__ import annotations
@@ -40,12 +24,7 @@ StageName = Literal["extract", "dedup", "caption", "embed", "store", "filter", "
 
 
 class PdfSplitSpec(RichModel):
-    """Per-request PDF chunking config (``pages_per_chunk`` only for now).
-
-    Mirrors :meth:`ServiceIngestor.pdf_split_config`. The server uses
-    ``pages_per_chunk`` to refine the realtime-vs-batch routing decision
-    in :func:`_route_by_page_count`.
-    """
+    """Per-request PDF chunking config (``pages_per_chunk`` only for now)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -53,16 +32,12 @@ class PdfSplitSpec(RichModel):
 
 
 class PipelineSpec(RichModel):
-    """Wire-format representation of fluent pipeline state.
+    """Representation of fluent pipeline state.
 
     Each ``*_params`` field is an opaque dict matching the corresponding
-    Pydantic params model (``ExtractParams``, ``EmbedParams``, …). The
-    worker reconstructs the typed model after server-side validation.
-
-    Fields are intentionally permissive (``dict[str, Any]``) so the wire
-    format does not need to track every params-model field change in
-    lock-step. The :mod:`nemo_retriever.service.policy` module is the
-    layer that decides which keys / values are admissible.
+    Pydantic params model (``ExtractParams``, ``EmbedParams``, and so on).
+    Fields are intentionally permissive so the format does not need to
+    track every params-model field change in lock-step.
     """
 
     model_config = ConfigDict(extra="forbid")

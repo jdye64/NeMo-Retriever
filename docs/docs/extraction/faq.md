@@ -72,7 +72,7 @@ For more information, refer to [Authentication and API keys](api-keys.md).
 
 ### Library Mode { #library-mode }
 
-For production environments, use the Python library, hosted NIMs, or the Docker service image. When you run the NeMo Retriever Library from Python, set `NVIDIA_API_KEY` only when you call [build.nvidia.com](https://build.nvidia.com/) hosted inference—it is not required for locally deployed Hugging Face models or self-hosted NIM endpoints. For more information, refer to [Deployment options](deployment-options.md) and [Authentication and API keys](api-keys.md).
+For production environments, use the Python library with hosted or self-hosted NIMs. When you run the NeMo Retriever Library from Python, set `NVIDIA_API_KEY` only when you call [build.nvidia.com](https://build.nvidia.com/) hosted inference—it is not required for locally deployed Hugging Face models or self-hosted NIM endpoints. For more information, refer to [Deployment options](deployment-options.md) and [Authentication and API keys](api-keys.md).
 
 For advanced scenarios, you might want to use library mode with self-hosted NIM instances. 
 You can set custom endpoints for each NIM. 

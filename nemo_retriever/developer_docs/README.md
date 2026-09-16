@@ -9,4 +9,4 @@ architecture, subsystems, and developer-facing tools.
 |-------|-------------|
 | [Graph Pipeline Registry](graph_pipeline_registry.md) | Central registry for managing, inspecting, comparing, and serializing golden pipeline graphs. |
 | [NimClient and Custom NIM Endpoints](nimclient.md) | Developer guide for custom NIM integrations with `NimClient`, `ModelInterface`, and UDFs. |
-| [Root Ingest CLI Design](root_ingest_cli_design.md) | Reviewer guide for the `retriever ingest` local, batch, and service CLI ownership split. |
+| [Root Ingest CLI Design](root_ingest_cli_design.md) | Reviewer guide for the `retriever ingest` local and batch CLI ownership split. |

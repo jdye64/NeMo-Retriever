@@ -1,13 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-26, NVIDIA CORPORATION & AFFILIATES.
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Answer-ready ``{evidence, coverage}`` shaping shared by the CLI and the service.
+"""Answer-ready ``{evidence, coverage}`` shaping for query results.
 
 The skill reasons over this shape: each evidence item is fidelity-tagged and
 citation-ready, and ``coverage`` summarizes what was searched and flags thin spots.
-Both ``retriever query --format evidence`` (CLI) and ``POST /v1/query`` with
-``format=evidence`` (service) project raw retrieval hits through this module, so
-the two surfaces stay in lockstep.
+``retriever query --format evidence`` projects raw retrieval hits through this
+module.
 """
 
 from __future__ import annotations
@@ -96,8 +95,7 @@ def build_evidence_result(hits: list, strategies_used: list[str]) -> dict[str, A
     ``evidence`` items are fidelity-tagged and citation-ready; ``coverage`` summarizes
     what was searched (``strategies_used``, ``n_docs_seen``) and flags thin spots
     (single source, low-fidelity-only, out-of-corpus). This is the shape the skill
-    reasons over — emitted by ``retriever query --format evidence`` and by the
-    service ``/v1/query`` endpoint with ``format=evidence``.
+    reasons over — emitted by ``retriever query --format evidence``.
     """
     projected = [_evidence_item(h) for h in (hits or [])]
     omitted: list[dict[str, Any]] = []

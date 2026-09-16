@@ -2,7 +2,7 @@
 
 Use this page to compare how you run NeMo Retriever, including when to use [NVIDIA-hosted NIMs](https://build.nvidia.com/) versus self-hosting inference on your own hardware.
 
-Kubernetes Helm charts are no longer supported. Use the Python library, hosted NIMs, or the standalone Docker service image instead.
+Kubernetes Helm charts and the HTTP Retriever service image are no longer supported. Use the Python library, CLI, and hosted or self-hosted NIMs instead.
 
 ## Compare deployment options
 
@@ -12,10 +12,6 @@ Use the sections below to pick documentation and deployment options that match y
 
 1. [Pre-Requisites & Support Matrix](prerequisites-support-matrix.md)
 2. [Use the Python API](nemo-retriever-api-reference.md) or [Use the CLI](https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever/docs/cli) — install and run the [`nemo_retriever`](https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever) package in your environment
-
-### I want a standalone Docker service container
-
-Build and run the NeMo Retriever service image with the [Docker service image guide](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/docker.md). Use this for local or host-level service-container validation. Development Compose helpers live in [`nemo_retriever/dev/compose`](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/dev/compose/README.md).
 
 ### I want examples and notebooks
 
@@ -46,7 +42,7 @@ Consider hosted NIMs when:
 
 ## When to self-host NIMs { #when-to-self-host-nims }
 
-Self-hosted NIMs run on your GPUs or air-gapped hardware. Point the library, CLI, or Docker service at those OpenAI-compatible or NIM HTTP endpoints.
+Self-hosted NIMs run on your GPUs or air-gapped hardware. Point the library or CLI at those OpenAI-compatible or NIM HTTP endpoints.
 
 Consider self-hosting when:
 
@@ -58,7 +54,7 @@ Consider self-hosting when:
 
 ## Air-gapped and disconnected deployment { #air-gapped-deployment }
 
-The **default document extraction pipeline** (page elements, table structure, OCR, and VL embed) runs disconnected when you mirror images and models into a private registry and point the library or Docker service at those endpoints.
+The **default document extraction pipeline** (page elements, table structure, OCR, and VL embed) runs disconnected when you mirror images and models into a private registry and point the library at those endpoints.
 
 On a staging host with internet access, pull from NGC, retag to your private registry, then run in the enclave with registry and endpoint overrides.
 
@@ -70,7 +66,6 @@ For offline image captioning, deploy a self-hosted [Nemotron 3 Nano Omni](prereq
 
 **Related**
 
-- [Docker service image](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/docker.md)
 - [Development Compose helpers](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/dev/compose/README.md)
 - [About getting started](getting-started-about.md)
 - [Pre-Requisites & Support Matrix](prerequisites-support-matrix.md)

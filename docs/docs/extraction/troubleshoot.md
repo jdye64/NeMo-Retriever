@@ -53,15 +53,12 @@ inspect row columns and service logs directly.
 | --- | --- | --- |
 | `ValueError` or Pydantic validation error before execution | An unsupported run mode, parameter value, protocol, or parameter combination | Compare the call with the current [Python API reference](nemo-retriever-api-reference.md). Remove unknown parameters and reproduce with the smallest valid pipeline. |
 | `ImportError`, `ModuleNotFoundError`, or a missing-dependency `RuntimeError` | The selected local extraction path requires a package or executable that is not installed | Install the documented package extra or system dependency. Confirm that the Python environment running the worker, not only the client shell, contains it. |
-| `GraphIngestionError` with no HTTP status | The named remote stage returned a row-level error, its error payload omitted a status, or the endpoint was unreachable | Check DNS, routing, TLS, the endpoint URL, and the NIM readiness endpoint from the worker or service pod. Inspect `exc.records` after removing secrets and document content. |
+| `GraphIngestionError` with no HTTP status | The named remote stage returned a row-level error, its error payload omitted a status, or the endpoint was unreachable | Check DNS, routing, TLS, the endpoint URL, and the NIM readiness endpoint from the worker. Inspect `exc.records` after removing secrets and document content. |
 | HTTP `401` or `403` from a NIM | Missing, expired, or unauthorized credentials | Verify `NVIDIA_API_KEY`, `NGC_API_KEY`, or the stage-specific credential in the environment that makes the request. Do not attach API keys to a support case. |
-| HTTP `403` from the Retriever service | Authentication failure or a deployment policy that disallows the requested endpoint, stage, sink, or override | Read the response `detail`. Verify the service token and compare the requested pipeline with `/v1/ingest/pipeline-config`. |
-| HTTP `404` or `410` while opening a service ingest job | The Python SDK and Retriever service can be on incompatible API versions | A current client raises `RetrieverServiceCompatibilityError`. Align the Python package and service image versions. |
 | Other HTTP `4xx` | The upstream service rejected the request | Check file type, rendered page or image size, model name, endpoint path, and request schema. For `413` or `422`, reduce the payload or image size and verify the endpoint's input limits. |
 | HTTP `429` | The remote service is rate-limiting requests | Reduce concurrency or batch size and retry with backoff. Escalate only if throttling persists within the service quota. |
 | HTTP `5xx`, including `503` | The upstream NIM is unavailable, overloaded, not ready, or failed during inference | Check readiness, pod restarts, GPU memory, server logs, and request volume. Retry a minimal input after the NIM is healthy. |
-| Timeout, connection reset, DNS, TLS, or gRPC transport error | The client could not complete transport to the service or NIM | Test connectivity from the process or pod that runs the stage. Verify protocol, port, certificate trust, proxy, and network policy. Preserve the gRPC status and details when present. |
-| A per-document entry in `ServiceIngestResult.failures` | Upload or pipeline processing failed after a service job was created | Correlate the document ID with the job ID and service logs. Other documents in the same result can still have succeeded. |
+| Timeout, connection reset, DNS, TLS, or gRPC transport error | The client could not complete transport to the NIM | Test connectivity from the process that runs the stage. Verify protocol, port, certificate trust, proxy, and network policy. Preserve the gRPC status and details when present. |
 | Successful ingest with fewer rows than inputs (caption or ASR enabled) | Caption inference failed before row collection, or ASR dropped failed rows and logged warnings | Re-run with logging enabled. For caption, verify endpoint credentials and payload limits. For ASR, verify gRPC endpoint, `function_id`, and `NVIDIA_API_KEY`. |
 | OOM, worker exit, or container restart | Host or GPU resources were exhausted, or an orchestrator terminated the worker | Reduce batch size or concurrency, use smaller document groups, and inspect host, Ray, Docker, and NIM resource telemetry. |
 | `Infeasible Ray CPU/GPU plan` | Explicit worker counts or node overrides, including required Ray Data source capacity for filesystem inputs, exceed resources currently available to Ray. | Reduce `*_workers` or per-node concurrency, or wait for shared-cluster capacity. Refer to the [performance guide](performance_guide.md). |
@@ -167,13 +164,7 @@ On Debian or Ubuntu hosts:
 sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 ```
 
-For the bundled service container at runtime:
-
-```bash
-docker run -e INSTALL_FFMPEG=true nemo-retriever-service
-```
-
-This runtime install requires package-repository network egress.
+For container-hosted NIMs, install `ffmpeg` in the NIM or library host image before you run. This runtime install requires package-repository network egress.
 
 ## Can't start new thread error { #cant-start-new-thread-error }
 
@@ -201,7 +192,6 @@ To reduce memory pressure, try one or more of the following:
 
 - Process documents in smaller batches instead of submitting the entire corpus in one job.
 - Route outputs to a sink (for example, `.vdb_upload(...)`, `.webhook(...)`, or `.store(...)`) so results are written out instead of held in memory until the job finishes.
-- In `run_mode="service"`, pass `return_results=False` to `.ingest(...)` when you do not need the full result payload returned to the client. For parameter details, refer to the [Python API guide](nemo-retriever-api-reference.md).
 - Increase available host memory for the ingest workload.
 
 
@@ -235,18 +225,8 @@ environment:
   NIM_PIPELINE_MAX_BATCH_SIZE: "3"
 ```
 
-**Development Compose:** The default `nim-embedding` image tag is `1.12.0`.
-For that image, add `NIM_TRITON_MAX_BATCH_SIZE` to the existing
-`nim-embedding` environment mapping in
-`nemo_retriever/dev/compose/service-mode.compose.yaml`.
-The following example shows the key to add:
-
-```yaml
-NIM_TRITON_MAX_BATCH_SIZE: "3"
-```
-
 **Library or CLI with a remote NIM:** Set the image-specific batch-size
-variable on the NIM container or NIMService that serves your embed URL.
+variable on the NIM container that serves your embed URL.
 `--embed-batch-size` and `.embed(inference_batch_size=...)` batch requests
 after the NIM is running. They do not start the NIM.
 
@@ -475,7 +455,7 @@ Complete the following checks:
 
 ## Agentic retrieval fails with auto tool choice HTTP 400 { #agentic-auto-tool-choice }
 
-`retriever query --agentic`, `POST /v1/query` with `agentic=true`, or the MCP `agentic_query` tool can fail on the first LLM call with HTTP 400 from a self-hosted chat-completions NIM:
+`retriever query --agentic` can fail on the first LLM call with HTTP 400 from a self-hosted chat-completions NIM:
 
 ```text
 "auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set
@@ -483,7 +463,7 @@ Complete the following checks:
 
 The CLI then exits with `Agentic retrieval failed (llm_call_failed)`.
 
-A self-hosted Super-49B NIM is not tool-call ready by default. Add `--enable-auto-tool-choice --tool-call-parser llama3_json` to `NIM_PASSTHROUGH_ARGS` and set the service `agentic` block for service mode. NVIDIA-hosted Build endpoints do not need this change. `POST /v1/answer` is a separate path and does not require tool calling.
+A self-hosted Super-49B NIM is not tool-call ready by default. Add `--enable-auto-tool-choice --tool-call-parser llama3_json` to `NIM_PASSTHROUGH_ARGS`. NVIDIA-hosted Build endpoints do not need this change.
 
 For the copy-paste command, refer to [Self-hosted Super-49B](workflow-agentic-retrieval.md#self-hosted-super-49b).
 

@@ -45,12 +45,6 @@ class QueryStorageOptions:
 
 
 @dataclass(frozen=True)
-class QueryServiceOptions:
-    service_url: str = "http://localhost:7670"
-    service_api_token: str | None = None
-
-
-@dataclass(frozen=True)
 class QueryAgenticOptions:
     """Options for the agentic (ReAct) retrieval strategy."""
 
@@ -72,7 +66,7 @@ class QueryAgenticOptions:
     # LLM client (see AgenticRetrievalConfig.llm_client). Optional: defaults to
     # ``callable`` for both in-process and remote runs when unset.
     llm_client: str | None = None
-    # Accepted for service-layer compatibility only. The agent derives its own
+    # Accepted for option compatibility only. The agent derives its own
     # per-hop retrieval depth from ``top_k``, so this value is never read.
     backend_top_k: int | None = None
 
@@ -85,10 +79,3 @@ class QueryRequest:
     rerank: QueryRerankOptions = field(default_factory=QueryRerankOptions)
     storage: QueryStorageOptions = field(default_factory=QueryStorageOptions)
     agentic: QueryAgenticOptions = field(default_factory=QueryAgenticOptions)
-
-
-@dataclass(frozen=True)
-class ServiceQueryRequest:
-    query: str
-    retrieval: QueryRetrievalOptions = field(default_factory=QueryRetrievalOptions)
-    service: QueryServiceOptions = field(default_factory=QueryServiceOptions)

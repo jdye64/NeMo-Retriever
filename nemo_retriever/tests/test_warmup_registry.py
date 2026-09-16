@@ -12,13 +12,6 @@ from nemo_retriever.models.warmup_registry import (
     is_warmup_active,
     warm_local_models,
 )
-from nemo_retriever.service.config import LocalModelsConfig
-from nemo_retriever.service.services.pipeline_executor import (
-    _build_pool_warmup_spec_json,
-    _resolve_max_tasks_per_child,
-    get_service_warmup_status,
-    warmup_process_pool_workers,
-)
 
 
 def test_build_warmup_spec_full_local_stack() -> None:
@@ -77,33 +70,3 @@ def test_warm_local_models_registers_mock_instances() -> None:
     assert get_warmed_model("ocr") is mock_ocr
     assert get_warmed_model("embed") is mock_embed
     clear_warmed_models()
-
-
-def test_resolve_max_tasks_per_child_warmup_defaults() -> None:
-    local = LocalModelsConfig(enabled=True, warmup_on_startup=True)
-    assert _resolve_max_tasks_per_child(local) == 10_000
-
-    local_custom = LocalModelsConfig(enabled=True, warmup_on_startup=True, max_tasks_per_child=500)
-    assert _resolve_max_tasks_per_child(local_custom) == 500
-
-    local_off = LocalModelsConfig(enabled=True, warmup_on_startup=False)
-    assert _resolve_max_tasks_per_child(local_off) == 100
-
-
-def test_build_pool_warmup_spec_json_disabled() -> None:
-    local = LocalModelsConfig(enabled=True, warmup_on_startup=False)
-    assert _build_pool_warmup_spec_json(local, {"use_table_structure": True}, None, None) == ""
-
-
-def test_warmup_process_pool_workers_no_targets() -> None:
-    status = warmup_process_pool_workers()
-    assert status["complete"] is True
-
-
-def test_get_service_warmup_status_returns_copy() -> None:
-    from nemo_retriever.service.services import pipeline_executor
-
-    pipeline_executor._service_warmup_state["complete"] = False
-    status = get_service_warmup_status()
-    status["complete"] = True
-    assert get_service_warmup_status()["complete"] is False

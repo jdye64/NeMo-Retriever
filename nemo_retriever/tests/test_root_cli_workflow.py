@@ -22,7 +22,6 @@ from typer.testing import CliRunner
 
 import nemo_retriever.ingest.execution as ingest_execution
 import nemo_retriever.ingest.plan as ingest_plan
-import nemo_retriever.ingest.service as ingest_service
 import nemo_retriever.cli.ingest_workflow as ingest_workflow
 import nemo_retriever.cli.ingest.graph_commands as ingest_cli_graph
 import nemo_retriever.cli.ingest.shared as ingest_cli_shared
@@ -71,10 +70,10 @@ def test_root_help_lists_only_product_workflows() -> None:
     result = RUNNER.invoke(cli_main.app, ["--help"])
 
     assert result.exit_code == 0
-    assert "service" in result.output
     assert "ingest" in result.output
     assert "query" in result.output
     assert "harness" in result.output
+    assert "service" not in result.output
     for developer_command in (
         "audio",
         "image",
@@ -95,7 +94,7 @@ def test_root_help_lists_only_product_workflows() -> None:
 
 @pytest.mark.parametrize(
     "removed_command",
-    ("txt", "html", "local", "audio", "image", "pdf", "chart", "compare", "pipeline"),
+    ("txt", "html", "local", "audio", "image", "pdf", "chart", "compare", "pipeline", "service"),
 )
 def test_removed_root_commands_are_not_callable(removed_command: str) -> None:
     result = RUNNER.invoke(cli_main.app, [removed_command, "--help"])
@@ -112,15 +111,6 @@ def test_root_ingest_help_explains_cpu_hosted_embedding_default() -> None:
     assert "NVIDIA_API_KEY" in result.output
     assert "another endpoint." in result.output
 
-
-def test_service_root_is_operator_only() -> None:
-    result = RUNNER.invoke(cli_main.app, ["service", "--help"])
-
-    assert result.exit_code == 0
-    assert "start" in result.output
-    assert "mcp-stdio" in result.output
-    assert "│ ingest " not in result.output
-    assert "retriever ingest service" in result.output
 
 
 def test_root_ingest_runs_default_execution_chain(monkeypatch, tmp_path) -> None:
@@ -210,157 +200,7 @@ def test_root_ingest_without_mode_accepts_local_options_before_documents(monkeyp
     }
 
 
-def test_root_ingest_service_mode_uses_service_ingest_core(tmp_path, monkeypatch) -> None:
-    import nemo_retriever.service.service_ingestor as service_ingestor_module
 
-    document = tmp_path / "service.pdf"
-    document.write_bytes(b"%PDF-1.4\n")
-    captured: dict[str, Any] = {}
-
-    class _FakeServiceIngestor(list):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__()
-            captured["init"] = kwargs
-            self.dataframe = None
-
-        def files(self, files: list[str]):
-            captured["files"] = files
-            return self
-
-        def extract(self, params=None, *, split_config=None, extraction_mode="auto", **_kwargs):
-            captured["extract_params"] = params
-            captured["split_config"] = split_config
-            captured["extraction_mode"] = extraction_mode
-            return self
-
-        def dedup(self, params=None, **_kwargs):
-            captured["dedup_params"] = params
-            return self
-
-        def caption(self, params=None, **_kwargs):
-            captured["caption_params"] = params
-            return self
-
-        def embed(self, params=None, **_kwargs):
-            captured["embed_params"] = params
-            return self
-
-        def ingest(self, *args: Any, **kwargs: Any):
-            captured["ingest_kwargs"] = kwargs
-            return self
-
-    monkeypatch.setattr(service_ingestor_module, "ServiceIngestor", _FakeServiceIngestor)
-
-    result = RUNNER.invoke(
-        cli_main.app,
-        [
-            "ingest",
-            "service",
-            str(document),
-            "--service-url",
-            "http://retriever-service:7670",
-            "--service-concurrency",
-            "3",
-            "--service-api-token",
-            "service-token",
-            "--dpi",
-            "300",
-            "--extract-images",
-            "--embed-granularity",
-            "page",
-            "--dedup",
-            "--dedup-iou-threshold",
-            "0.6",
-            "--caption",
-            "--caption-context-text-max-chars",
-            "12",
-            "--text-chunk",
-            "--text-chunk-max-tokens",
-            "64",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert captured["init"] == {
-        "base_url": "http://retriever-service:7670",
-        "max_concurrency": 3,
-        "api_token": "service-token",
-    }
-    assert captured["files"] == [str(document)]
-    assert captured["extraction_mode"] == "auto"
-    assert captured["extract_params"].dpi == 300
-    assert captured["extract_params"].extract_images is True
-    assert captured["split_config"]["pdf"]["max_tokens"] == 64
-    assert captured["dedup_params"].iou_threshold == 0.6
-    assert captured["caption_params"].context_text_max_chars == 12
-    assert captured["embed_params"].embed_granularity == "page"
-    assert captured["ingest_kwargs"] == {"return_results": True}
-    assert "through retriever service http://retriever-service:7670" in result.output
-
-
-def test_service_split_config_expands_glob_patterns_for_auto_input(tmp_path) -> None:
-    document = tmp_path / "chunked.pdf"
-    document.write_bytes(b"%PDF-1.4\n")
-    request = ingest_service.ServiceIngestRequest(
-        documents=[str(tmp_path / "*.pdf")],
-        input_type="auto",
-        enable_text_chunk=True,
-        text_chunk_params=TextChunkParams(max_tokens=64, overlap_tokens=8),
-    )
-
-    split_config = ingest_service.service_split_config_for_request(request)
-
-    assert split_config == {"pdf": {"max_tokens": 64, "overlap_tokens": 8, "encoding": "utf-8"}}
-
-
-def test_root_ingest_service_dry_run_redacts_token(tmp_path, monkeypatch) -> None:
-    import nemo_retriever.service.service_ingestor as service_ingestor_module
-
-    document = tmp_path / "service.pdf"
-    document.write_bytes(b"%PDF-1.4\n")
-
-    def fail_service_ingestor(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("ServiceIngestor should not be created for --dry-run")
-
-    monkeypatch.setattr(service_ingestor_module, "ServiceIngestor", fail_service_ingestor)
-
-    result = RUNNER.invoke(
-        cli_main.app,
-        [
-            "ingest",
-            "service",
-            str(document),
-            "--service-api-token",
-            "service-token",
-            "--dry-run",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["run_mode"] == "service"
-    assert payload["documents"] == [str(document)]
-    assert payload["service"]["service_api_token"] == "<redacted>"
-    assert payload["service"]["service_url"] == "http://localhost:7670"
-
-
-@pytest.mark.parametrize(
-    ("flag", "value"),
-    [
-        ("--lancedb-uri", "custom-db"),
-        ("--embed-invoke-url", "http://embed.example/v1"),
-        ("--ray-address", "ray://localhost:10001"),
-    ],
-)
-def test_root_ingest_service_mode_rejects_local_only_options(tmp_path, flag: str, value: str) -> None:
-    document = tmp_path / "service.pdf"
-    document.write_bytes(b"%PDF-1.4\n")
-
-    result = RUNNER.invoke(cli_main.app, ["ingest", "service", str(document), flag, value])
-
-    assert result.exit_code != 0
-    assert "No such option" in result.output
-    assert flag in result.output
 
 
 def test_root_ingest_passes_vdb_options_and_run_mode(monkeypatch, tmp_path) -> None:
@@ -1068,7 +908,6 @@ def test_root_ingest_help_defaults_to_local_workflow(monkeypatch: pytest.MonkeyP
     assert "input formats, not commands" in result.output
     assert "CPU-only hosts use NVIDIA's hosted embedding endpoint" in result.output
     assert "retriever ingest batch --help" in result.output
-    assert "retriever ingest service --help" in result.output
     for option in (
         "--index-mode",
         "--lancedb-uri",
@@ -1091,7 +930,7 @@ def test_root_ingest_mode_overview_hides_legacy_local_alias() -> None:
     assert result.exit_code == 2
     assert "retriever ingest DOCUMENTS" in result.output
     assert "│ batch " in result.output
-    assert "│ service " in result.output
+    assert "│ service " not in result.output
     assert "│ local " not in result.output
     assert "retriever ingest local" not in result.output
 
@@ -1179,24 +1018,6 @@ def test_root_ingest_default_local_rejects_batch_only_options(tmp_path) -> None:
     assert "Batch-only option(s) require `retriever ingest batch`" in result.output
     assert "--ray-address" in result.output
 
-
-def test_root_ingest_service_help_hides_local_only_options() -> None:
-    result = RUNNER.invoke(cli_main.app, ["ingest", "service", "--help"], env={"COLUMNS": "200"})
-
-    assert result.exit_code == 0
-    assert "Usage: root ingest service [OPTIONS] {documents}..." in result.output
-    assert "--service-url" in result.output
-    assert "--extract-images" in result.output
-    assert "--embed-granular" in result.output
-    assert "--lancedb-uri" not in result.output
-    assert "--overwrite" not in result.output
-    assert "--append" not in result.output
-    assert "--ray-address" not in result.output
-    assert "--embed-invoke" not in result.output
-    assert "--local-ingest" not in result.output
-    assert "--ocr-lang" not in result.output
-    assert "--api-key" not in result.output
-    assert "--caption-invoke" not in result.output
 
 
 def test_root_ingest_dry_run_prints_plan_without_creating_ingestor(monkeypatch, tmp_path) -> None:

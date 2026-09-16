@@ -7,11 +7,11 @@ This quick start guide shows how to run NeMo Retriever Library as a library in l
 - **Local GPU (Linux):** Pull and run [Nemotron RAG models from Hugging Face](https://huggingface.co/collections/nvidia/nemotron-rag) on your GPU(s). Requires CUDA 13.x and the `[local]` extra.
 - **Remote NIM:** Call build.nvidia.com hosted or self-hosted NeMo Retriever NIM endpoints over the network. The base package installs on Linux, Windows x64, and macOS Apple Silicon (arm64); no local GPU is required. macOS Intel (x86_64) is not supported.
 
-The steps below cover environment setup, installation, and a first ingestion run. For container deployments, refer to [Deployment at a glance](#deployment-at-a-glance) and the [Pre-Requisites & Support Matrix](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/).
+The steps below cover environment setup, installation, and a first ingestion run. For hosted versus self-hosted NIMs, refer to the [Pre-Requisites & Support Matrix](https://docs.nvidia.com/nemo/retriever/latest/extraction/prerequisites-support-matrix/).
 
 ## Deployment at a glance
 
-For standalone service-image builds and local container runs, see **[`docker.md`](docker.md)**. Kubernetes Helm charts are no longer supported.
+Run the Python library and CLI in your environment. Kubernetes Helm charts and the HTTP Retriever service image are no longer supported.
 
 ## Prerequisites
 
@@ -642,23 +642,6 @@ For example, with apt-get on Ubuntu:
 sudo apt install -y ffmpeg
 ```
 
-The bundled Docker image uses the FFmpeg package provided by the base Ubuntu
-image when `INSTALL_FFMPEG=true` is set. If your workflow depends on exact
-FFmpeg codec or version behavior, verify the image package against those
-requirements.
-
-The bundled Dockerfile skips ffmpeg/ffprobe by default. For the service image,
-set `INSTALL_FFMPEG=true` at runtime to install them during container startup:
-
-```bash
-docker run -e INSTALL_FFMPEG=true nemo-retriever-service
-```
-
-This runtime install requires network access to package repositories, a
-writable root filesystem, and security policy that allows the image's scoped
-sudo use. For locked-down environments that cannot install packages at startup,
-use a custom service image that already contains ffmpeg/ffprobe.
-
 ```python
 ingestor = create_ingestor(run_mode="batch")
 ingestor = ingestor.files([str(INPUT_AUDIO)]).extract_audio()
@@ -825,7 +808,7 @@ For source-task CPU reservations and custom Ray Data graphs, refer to the [perfo
 
 ## NIM containers
 
-For deployment of NeMo Retriever / **NIM** containers, use the Docker service image in **[`docker.md`](docker.md)** and the **[NeMo Retriever Library](https://docs.nvidia.com/nemo/retriever/latest/extraction/overview/)** documentation. Kubernetes Helm charts are no longer supported.
+For deployment of **NIM** containers, use the NVIDIA NIM documentation together with the **[NeMo Retriever Library](https://docs.nvidia.com/nemo/retriever/latest/extraction/overview/)** extraction guides. Kubernetes Helm charts and the HTTP Retriever service image are no longer supported.
 
 ## Troubleshooting
 

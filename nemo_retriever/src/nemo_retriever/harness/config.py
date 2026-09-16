@@ -15,7 +15,7 @@ NEMO_RETRIEVER_ROOT = Path(__file__).resolve().parents[3]
 REPO_ROOT = NEMO_RETRIEVER_ROOT.parent
 DEFAULT_TEST_CONFIG_PATH = NEMO_RETRIEVER_ROOT / "harness" / "test_configs.yaml"
 DEFAULT_NIGHTLY_CONFIG_PATH = NEMO_RETRIEVER_ROOT / "harness" / "nightly_config.yaml"
-VALID_RUN_MODES = {"batch", "inprocess", "service"}
+VALID_RUN_MODES = {"batch", "inprocess"}
 VALID_EVALUATION_MODES = {"none", "audio_recall", "beir"}
 VALID_RECALL_ADAPTERS = {"none"}
 VALID_BEIR_LOADERS = {"bo10k_csv", "bo767_csv", "earnings_csv", "financebench_json", "jp20_csv", "vidore_hf"}
@@ -50,6 +50,8 @@ REMOVED_HARNESS_KEY_MESSAGES = {
     "helm_sudo": "Helm harness options are no longer supported; Kubernetes and Helm were removed",
     "kubectl_bin": "kubectl harness options are no longer supported; Kubernetes and Helm were removed",
     "kubectl_sudo": "kubectl harness options are no longer supported; Kubernetes and Helm were removed",
+    "service_url": "Retriever service mode was removed; use local or batch harness runs",
+    "service_max_concurrency": "Retriever service mode was removed; use local or batch harness runs",
 }
 REMOVED_HARNESS_KEYS = set(REMOVED_HARNESS_KEY_MESSAGES)
 REMOVED_HARNESS_ENV_KEYS = {
@@ -72,6 +74,8 @@ REMOVED_HARNESS_ENV_KEYS = {
     "HARNESS_HELM_SUDO": "helm_sudo",
     "HARNESS_KUBECTL_BIN": "kubectl_bin",
     "HARNESS_KUBECTL_SUDO": "kubectl_sudo",
+    "HARNESS_SERVICE_URL": "service_url",
+    "HARNESS_SERVICE_MAX_CONCURRENCY": "service_max_concurrency",
 }
 DEFAULT_NIGHTLY_SLACK_METRIC_KEYS = [
     "pages",
@@ -147,15 +151,12 @@ class HarnessConfig:
     write_detection_file: bool = False
     use_heuristics: bool = False
 
-    service_url: str | None = None
-    service_max_concurrency: int = 8
-
+    api_key: str | None = None
     page_elements_invoke_url: str | None = None
     ocr_invoke_url: str | None = None
     table_structure_invoke_url: str | None = None
     embed_invoke_url: str | None = None
     caption_invoke_url: str | None = None
-    api_key: str | None = None
 
     pdf_extract_workers: int = 8
     pdf_extract_num_cpus: float = 2.0
@@ -186,13 +187,6 @@ class HarnessConfig:
 
         if self.run_mode not in VALID_RUN_MODES:
             errors.append(f"run_mode must be one of {sorted(VALID_RUN_MODES)}")
-
-        if self.run_mode == "service":
-            if not self.service_url:
-                errors.append("service_url is required when run_mode='service'")
-            if self.service_max_concurrency < 1:
-                errors.append("service_max_concurrency must be >= 1")
-            return errors
 
         if self.evaluation_mode not in VALID_EVALUATION_MODES:
             errors.append(f"evaluation_mode must be one of {sorted(VALID_EVALUATION_MODES)}")
@@ -403,8 +397,6 @@ def _apply_env_overrides(config_dict: dict[str, Any]) -> None:
         "HARNESS_EXTRACT_INFOGRAPHICS": ("extract_infographics", _parse_bool),
         "HARNESS_WRITE_DETECTION_FILE": ("write_detection_file", _parse_bool),
         "HARNESS_USE_HEURISTICS": ("use_heuristics", _parse_bool),
-        "HARNESS_SERVICE_URL": ("service_url", str),
-        "HARNESS_SERVICE_MAX_CONCURRENCY": ("service_max_concurrency", _parse_number),
         "HARNESS_API_KEY": ("api_key", str),
         "HARNESS_PAGE_ELEMENTS_INVOKE_URL": ("page_elements_invoke_url", str),
         "HARNESS_OCR_INVOKE_URL": ("ocr_invoke_url", str),

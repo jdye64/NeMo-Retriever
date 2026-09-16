@@ -6,11 +6,6 @@ on:
     - cron: "30 23 * * *"
   workflow_dispatch:
     inputs:
-      skip-docker:
-        description: 'Skip Docker build/publish'
-        required: false
-        type: boolean
-        default: false
       skip-pypi:
         description: 'Skip PyPI build/publish'
         required: false
@@ -33,62 +28,6 @@ jobs:
         uses: ./.github/actions/determine-version
         with:
           date-format: '%Y.%m.%d'
-
-  # Build and publish Docker nightly
-  docker-build-publish:
-    name: Docker Nightly Build & Publish
-    if: ${{ !inputs.skip-docker }}
-    needs: determine-version
-    runs-on: linux-large-disk
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          # Schedule always publishes from default-branch main. workflow_dispatch
-          # uses the selected ref so a PR branch can be built and pushed to NGC.
-          ref: ${{ github.event_name == 'schedule' && 'main' || github.ref }}
-
-      - name: Setup Docker Buildx
-        uses: ./.github/actions/setup-docker-buildx
-        with:
-          use-qemu: 'true'
-          platforms: 'linux/amd64,linux/arm64'
-
-      - name: Login to NGC
-        uses: ./.github/actions/docker-login-ngc
-        with:
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Create HF token file
-        env:
-          HF_ACCESS_TOKEN: ${{ secrets.HF_ACCESS_TOKEN }}
-        run: |
-          mkdir -p ./scripts/private_local
-          if [ -n "${HF_ACCESS_TOKEN}" ]; then
-            printf '%s' "${HF_ACCESS_TOKEN}" > ./scripts/private_local/hf_token.txt
-          fi
-
-      - name: Build and Push Multi-platform Image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          target: service
-          platforms: linux/amd64,linux/arm64
-          provenance: false
-          sbom: false
-          build-args: |
-            DOWNLOAD_DEFAULT_TOKENIZER=True
-            GIT_COMMIT=${{ github.sha }}
-            RETRIEVER_VERSION=${{ needs.determine-version.outputs.version }}
-            RETRIEVER_RELEASE_TYPE=dev
-          tags: ${{ secrets.DOCKER_REGISTRY }}/nrl-service:${{ needs.determine-version.outputs.docker-tag }}
-          secret-files: hf_token=./scripts/private_local/hf_token.txt
-
-      - name: Cleanup HF token file
-        if: always()
-        run: rm -f ./scripts/private_local/hf_token.txt
 
   # Build and publish PyPI wheels
   pypi-build:
@@ -117,7 +56,6 @@ jobs:
     name: Nightly Build Complete
     needs:
       - determine-version
-      - docker-build-publish
       - pypi-publish
     runs-on: ubuntu-latest
     if: always()
@@ -125,5 +63,4 @@ jobs:
       - name: Report status
         run: |
           echo "Nightly build completed for version: ${{ needs.determine-version.outputs.version }}"
-          echo "Docker: ${{ needs.docker-build-publish.result }}"
           echo "PyPI: ${{ needs.pypi-publish.result }}"

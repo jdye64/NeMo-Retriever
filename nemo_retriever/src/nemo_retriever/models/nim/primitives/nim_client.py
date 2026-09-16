@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _service_tracing() -> Any | None:
     try:
-        from nemo_retriever.service import tracing
+        from nemo_retriever.common import tracing
     except Exception:
         logger.debug("Service tracing helper unavailable for NimClient request", exc_info=True)
         return None

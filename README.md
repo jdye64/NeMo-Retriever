@@ -23,7 +23,7 @@ The following diagram shows the NeMo Retriever Library pipeline.
 
 ![Pipeline Overview](https://docs.nvidia.com/nemo/retriever/extraction/images/overview-extraction.png)
 
-For standalone service-image builds, see **[Docker Service Image](nemo_retriever/docker.md)**. Kubernetes Helm charts are no longer supported.
+Run the Python library and CLI. Kubernetes Helm charts and the HTTP Retriever service image are no longer supported.
 
 *Note*:
 Along with the recent repo name change, we're phasing out legacy ingestion APIs and simplifying the dependencies. You can follow this work and see the forward looking API via the [nemo_retriever](nemo_retriever) library subfolder.

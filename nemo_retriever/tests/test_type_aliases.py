@@ -12,7 +12,7 @@ from nemo_retriever.common.params import IngestorRunMode
 
 
 def test_run_mode_type_aliases_are_domain_specific() -> None:
-    assert set(get_args(IngestorRunMode)) == {"inprocess", "batch", "service"}
+    assert set(get_args(IngestorRunMode)) == {"inprocess", "batch"}
     assert set(get_args(ModelRunMode)) == {"local", "NIM", "build-endpoint"}
 
 

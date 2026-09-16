@@ -4,7 +4,11 @@ This documentation contains the release notes for [NeMo Retriever Library](overv
 
 ## Kubernetes and Helm support removed { #helm-k8s-removed }
 
-NeMo Retriever Library no longer supports Kubernetes Helm charts or in-repo Helm/OpenShift deployment sources. Use the Python library, hosted NIMs, or the [Docker service image](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/nemo_retriever/docker.md). Historical notes below describe former Helm chart behavior from 26.08 releases.
+NeMo Retriever Library no longer supports Kubernetes Helm charts, the HTTP Retriever service, or in-repo Helm/OpenShift deployment sources. Use the Python library, CLI, and hosted or self-hosted NIMs. Historical notes below describe former Helm chart and service behavior from 26.08 releases.
+
+## HTTP Retriever service removed { #http-service-removed }
+
+NeMo Retriever Library no longer ships `create_ingestor(run_mode="service")`, `retriever ingest service`, `retriever query service`, `retriever service`, the `nrl-service` container image, or the `[service]` extra. Ingest with `inprocess` or `batch` graph run modes. Query LanceDB with `retriever query` or `Retriever`. `Retriever(run_mode="service")` still means HTTP embed for queries, not the removed HTTP ingest service.
 
 ## 26.08.2 Former Helm Chart Patch { #release-26082 }
 
@@ -114,7 +118,7 @@ The following sections summarize user-visible changes included in 26.08.1 and fo
 - LanceDB retrieval-mode autodetection and persisted embedding identity for automatic local queries.
 - Local queries warn when an explicit embedding model differs from the model recorded on the LanceDB table. The query continues with the explicit override so intentional model overrides remain available.
 - Dense image-only VDB records are retained where applicable.
-- Scope-isolated collection and document catalog APIs (`/v1/collections`) create, list, get, update, and delete collections and committed documents without exposing LanceDB table names. Ingest and replace use `POST /v1/ingest/job` with `collection_name`. Retrieval uses `POST /v1/query` with `collection_name`. Refer to [Collection management API](../reference/collection-management-api.md).
+- Scope-isolated collection and document catalog APIs (`/v1/collections`) create, list, get, update, and delete collections and committed documents without exposing LanceDB table names. Ingest and replace use `POST /v1/ingest/job` with `collection_name`. Retrieval uses `POST /v1/query` with `collection_name`. That HTTP catalog is no longer shipped; use LanceDB table names from the Python API and CLI. Refer to [Vector databases](vdbs.md).
 - Fixed an issue where concurrent ingests into one VectorDB process could report success minutes before the rows were durable or queryable. Each write now commits its rows independently, and index maintenance runs in a separate serialized phase where concurrent writers share one coalesced rebuild. An index-readiness wait that expires logs a warning and leaves the committed rows queryable instead of failing the write. Refer to [LanceDB index creation fails during concurrent ingestion](troubleshoot.md#lancedb-concurrent-index-creation).
 
 ### Packaging and platform { #packaging-and-platform }
@@ -152,7 +156,7 @@ The following foundational capabilities remain current. They are not new 26.08.1
 - LanceDB is the first-party vector path for new deployments. Milvus and MinIO guidance is removed from the primary extraction doc set.
 - Evaluation includes a BEIR-centric overhaul and the experimental `retriever skill-eval` benchmark CLI.
 - Text-to-SQL agent graph and tabular tooling support structured data retrieval, including tabular data ingestion.
-- Optional install extras include `[local]`, `[multimedia]`, `[llm]`, `[tabular]`, `[nemotron-parse]`, `[service]`, and slim remote or NIM-only installs on Mac and Windows.
+- Optional install extras include `[local]`, `[multimedia]`, `[llm]`, `[tabular]`, `[nemotron-parse]`, and slim remote or NIM-only installs on Mac and Windows.
 - Documentation consolidates extraction concepts, ingest workflow, embeddings, audio and video guides, prerequisites and support matrix, and UDF or custom stages in the [graph README](https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever/src/nemo_retriever/graph#nemo-retriever-graph).
 
 ## Release Notes for Previous Versions { #previous-versions }

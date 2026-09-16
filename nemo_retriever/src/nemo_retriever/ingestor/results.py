@@ -1,14 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Serialize and deserialize ingest pipeline DataFrames for service transport.
+"""Serialize and deserialize ingest pipeline DataFrames.
 
-The retriever service returns per-document rows over HTTP; these helpers
-keep the wire format aligned with the ``pandas.DataFrame`` produced by
-:meth:`nemo_retriever.ingestor.graph_ingestor.GraphIngestor.ingest` in
-``inprocess`` and ``batch`` run modes (same column names and row shape),
+These helpers keep a JSON-safe row shape aligned with the
+``pandas.DataFrame`` produced by
+:meth:`nemo_retriever.ingestor.graph_ingestor.GraphIngestor.ingest`,
 while stripping bulky raw images and embeddings from cell values. Callers
-can opt into the future compact result schema with ``result_schema="compact"``.
+can opt into the compact result schema with ``result_schema="compact"``.
 """
 
 from __future__ import annotations

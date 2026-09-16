@@ -12,7 +12,6 @@ from nemo_retriever.ingestor.results import (
     dataframe_from_transport_records,
     dataframe_to_transport_records,
 )
-from nemo_retriever.service.services.pipeline_executor import _sanitize_result_data
 
 
 def test_transport_preserves_column_layout_and_strips_bulky_payloads() -> None:
@@ -289,45 +288,6 @@ def test_round_trip_matches_inprocess_column_layout() -> None:
     assert list(rebuilt.columns) == list(df.columns)
     assert len(rebuilt) == len(df)
     assert rebuilt["text"].tolist() == df["text"].tolist()
-
-
-def test_sanitize_result_data_delegates_to_shared_helper() -> None:
-    df = pd.DataFrame({"path": ["/x.pdf"], "text": ["x"]})
-    assert _sanitize_result_data(df) == dataframe_to_transport_records(df)
-
-
-def test_sanitize_result_data_accepts_compact_schema() -> None:
-    df = pd.DataFrame({"path": ["/x.pdf"], "text": ["x"]})
-    assert _sanitize_result_data(df, result_schema="compact") == dataframe_to_transport_records(
-        df,
-        result_schema="compact",
-    )
-
-
-def test_sanitize_result_data_forwards_compact_embedding_flag() -> None:
-    df = pd.DataFrame(
-        {
-            "text": ["x"],
-            "earlier_payload": [{"embedding": [9.0]}],
-            "custom_embeddings": [{"embedding": [0.1]}],
-        }
-    )
-
-    assert _sanitize_result_data(
-        df, result_schema="compact", return_embeddings=True, embedding_column="custom_embeddings"
-    ) == dataframe_to_transport_records(
-        df, result_schema="compact", return_embeddings=True, embedding_column="custom_embeddings"
-    )
-
-
-def test_sanitize_result_data_forwards_legacy_payload_flags() -> None:
-    df = pd.DataFrame({"metadata": [{"embedding": [0.1]}], "page_image": [{"image_b64": "raw"}]})
-
-    assert _sanitize_result_data(df, return_embeddings=True, return_images=True) == dataframe_to_transport_records(
-        df,
-        return_embeddings=True,
-        return_images=True,
-    )
 
 
 def test_concat_ingest_results_follows_document_order() -> None:

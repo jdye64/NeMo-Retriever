@@ -37,7 +37,6 @@ NeMo Retriever Library supports uploading data through `.vdb_upload()` on `creat
 
 - **Python SDK ingest** (`.vdb_upload()` on `create_ingestor(...)`) persists embeddings to LanceDB with default URI `lancedb` and default table `nemo-retriever`. Default `Retriever()` queries that same table.
 - **Local and batch CLI ingest** (`retriever ingest`, `retriever ingest local`, `retriever ingest batch`) persist embeddings to LanceDB (default URI `lancedb`, table `nemo-retriever`).
-- **Service CLI ingest** (`retriever ingest service`) writes to service-configured storage.
 
 The Python SDK and the local CLI share the same LanceDB default table. Pass an explicit URI and table name at ingest and at query time only when you need a non-default location.
 

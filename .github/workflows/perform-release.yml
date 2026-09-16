@@ -19,11 +19,6 @@ on:
         required: false
         type: boolean
         default: false
-      skip-docker:
-        description: '⛔ SKIP Docker — disable Docker build and publish entirely'
-        required: false
-        type: boolean
-        default: false
       release-type:
         description: 'Release type for PyPI packages'
         required: false
@@ -103,139 +98,11 @@ jobs:
       workflow-ref: ${{ github.ref_name }}
       runner: linux-large-disk
 
-  nvingest-docker-build:
-    name: Build nv-ingest Docker Image
-    if: ${{ !inputs.skip-docker }}
-    needs: determine-version
-    runs-on: linux-large-disk
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.determine-version.outputs.source-ref }}
-
-      - name: Setup Docker Buildx
-        uses: ./.github/actions/setup-docker-buildx
-        with:
-          use-qemu: 'true'
-          platforms: 'linux/amd64,linux/arm64'
-
-      - name: Set image metadata
-        id: meta
-        run: |
-          if [ -z "$DOCKER_REGISTRY" ]; then
-            echo "::error::DOCKER_REGISTRY secret is not set"
-            exit 1
-          fi
-          echo "image=${DOCKER_REGISTRY}/nrl-service:${{ needs.determine-version.outputs.version }}" >> $GITHUB_OUTPUT
-        env:
-          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
-
-      - name: Create HF token file
-        env:
-          HF_ACCESS_TOKEN: ${{ secrets.HF_ACCESS_TOKEN }}
-        run: |
-          mkdir -p ./scripts/private_local
-          if [ -n "${HF_ACCESS_TOKEN}" ]; then
-            printf '%s' "${HF_ACCESS_TOKEN}" > ./scripts/private_local/hf_token.txt
-          fi
-
-      # Multi-platform images cannot be docker-saved/loaded. Build both
-      # architectures into GHA cache here; the publish job rebuilds from that
-      # cache and pushes a manifest list only after every artifact validates.
-      - name: Build image (validate, do not push)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          target: service
-          platforms: linux/amd64,linux/arm64
-          provenance: false
-          sbom: false
-          build-args: |
-            DOWNLOAD_DEFAULT_TOKENIZER=True
-            GIT_COMMIT=${{ github.sha }}
-          tags: ${{ steps.meta.outputs.image }}
-          secret-files: hf_token=./scripts/private_local/hf_token.txt
-          cache-to: type=gha,scope=nvingest-release,mode=max
-          cache-from: type=gha,scope=nvingest-release
-          outputs: type=cacheonly
-
-  # ══════════════════════════════════════════════════════════════════════
-  #  Publish Phase — runs only after ALL builds succeed and dry-run is
-  #  off.  Every publish job depends on every build job so that a single
-  #  build failure prevents any artifact from being published.
-  # ══════════════════════════════════════════════════════════════════════
-
-  nvingest-docker-publish:
-    name: Publish nv-ingest Docker Image
-    if: ${{ !inputs.dry-run && !inputs.skip-docker && !cancelled() && !failure() }}
-    needs:
-      - determine-version
-      - nvingest-docker-build
-      - pypi-build
-    runs-on: linux-large-disk
-    outputs:
-      image: ${{ steps.push.outputs.image }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.determine-version.outputs.source-ref }}
-
-      - name: Setup Docker Buildx
-        uses: ./.github/actions/setup-docker-buildx
-        with:
-          use-qemu: 'true'
-          platforms: 'linux/amd64,linux/arm64'
-
-      - name: Login to NGC
-        uses: ./.github/actions/docker-login-ngc
-        with:
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Create HF token file
-        env:
-          HF_ACCESS_TOKEN: ${{ secrets.HF_ACCESS_TOKEN }}
-        run: |
-          mkdir -p ./scripts/private_local
-          if [ -n "${HF_ACCESS_TOKEN}" ]; then
-            printf '%s' "${HF_ACCESS_TOKEN}" > ./scripts/private_local/hf_token.txt
-          fi
-
-      - name: Build and push multi-platform image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          target: service
-          platforms: linux/amd64,linux/arm64
-          provenance: false
-          sbom: false
-          build-args: |
-            DOWNLOAD_DEFAULT_TOKENIZER=True
-            GIT_COMMIT=${{ github.sha }}
-          tags: ${{ needs.nvingest-docker-build.outputs.image }}
-          secret-files: hf_token=./scripts/private_local/hf_token.txt
-          cache-from: type=gha,scope=nvingest-release
-
-      - name: Inspect published image
-        id: push
-        run: |
-          IMAGE="${{ needs.nvingest-docker-build.outputs.image }}"
-          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
-          docker buildx imagetools inspect "$IMAGE"
-
   pypi-publish:
     name: Publish Python Wheels (last — PyPI versions are immutable)
     if: ${{ !inputs.dry-run && !cancelled() && !failure() }}
     needs:
       - pypi-build
-      - nvingest-docker-publish
     uses: ./.github/workflows/reusable-pypi-publish.yml
     secrets:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
@@ -249,7 +116,6 @@ jobs:
     needs:
       - determine-version
       - pypi-publish
-      - nvingest-docker-publish
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -273,8 +139,6 @@ jobs:
       - determine-version
       - pypi-build
       - pypi-publish
-      - nvingest-docker-build
-      - nvingest-docker-publish
       - tag-release
     runs-on: ubuntu-latest
     steps:
@@ -288,11 +152,7 @@ jobs:
           PYPI_BUILD_RESULT: ${{ needs.pypi-build.result }}
           PYPI_PUBLISH_RESULT: ${{ needs.pypi-publish.result }}
           PYPI_VERSION: ${{ needs.pypi-build.outputs.version }}
-          NVINGEST_BUILD_RESULT: ${{ needs.nvingest-docker-build.result }}
-          NVINGEST_PUBLISH_RESULT: ${{ needs.nvingest-docker-publish.result }}
           TAG_RESULT: ${{ needs.tag-release.result }}
-          SKIP_DOCKER: ${{ inputs.skip-docker }}
-          NVINGEST_IMAGE: ${{ needs.nvingest-docker-publish.outputs.image || needs.nvingest-docker-build.outputs.image }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
@@ -310,7 +170,7 @@ jobs:
           }
 
           ALL_BUILDS_OK="true"
-          for r in "$PYPI_BUILD_RESULT" "$NVINGEST_BUILD_RESULT"; do
+          for r in "$PYPI_BUILD_RESULT"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               ALL_BUILDS_OK="false"
               break
@@ -351,19 +211,6 @@ jobs:
           MSG+="\n    *Quick install:*"
           MSG+="\n    \`\`\`pip install --index-url ${ARTIFACTORY_URL} nemo-retriever==${PIP_VER}\`\`\`"
 
-          # — nv-ingest Docker —
-          if [ "$SKIP_DOCKER" = "true" ]; then
-            MSG+="\n:fast_forward: *nv-ingest Docker* — Disabled (skip-docker)"
-          elif [ "$DRY_RUN" = "true" ]; then
-            MSG+="\n$(status_emoji "$NVINGEST_BUILD_RESULT") *nv-ingest Docker* — Built and validated (not pushed)"
-          elif [ "$NVINGEST_PUBLISH_RESULT" = "success" ]; then
-            MSG+="\n:white_check_mark: *nv-ingest Docker* — \`${NVINGEST_IMAGE}\` (linux/amd64, linux/arm64)"
-            MSG+="\n    \`\`\`docker pull ${NVINGEST_IMAGE}\`\`\`"
-          elif [ "$NVINGEST_BUILD_RESULT" != "success" ]; then
-            MSG+="\n$(status_emoji "$NVINGEST_BUILD_RESULT") *nv-ingest Docker* — Build: ${NVINGEST_BUILD_RESULT}"
-          else
-            MSG+="\n$(status_emoji "$NVINGEST_PUBLISH_RESULT") *nv-ingest Docker* — Publish blocked (other build failed)"
-          fi
 
           # — Git Tag —
           if [ "$DRY_RUN" = "true" ]; then

@@ -43,7 +43,7 @@ source-built FFmpeg release. If your workflow depends on exact FFmpeg version
 or codec behavior, verify the package inside the image against those
 requirements.
 
-For Docker service containers, set `INSTALL_FFMPEG=true` when the image entrypoint should install ffmpeg/ffprobe at startup. This runtime path requires package-repository network egress. For air-gapped hosts, install the binaries in the image before you run. Refer to [Air-gapped and disconnected deployment](deployment-options.md#air-gapped-deployment).
+Audio and video workflows require `ffmpeg` and `ffprobe` on `PATH`. For air-gapped hosts, install the binaries before you run. Refer to [Air-gapped and disconnected deployment](deployment-options.md#air-gapped-deployment).
 
 !!! important
 

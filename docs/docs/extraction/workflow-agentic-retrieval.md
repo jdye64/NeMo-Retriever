@@ -77,108 +77,23 @@ Embedding credentials use `NVIDIA_API_KEY` or `NGC_API_KEY` when you call a remo
 
 Use this path when the agent LLM is a self-hosted Super-49B NIM rather than local in-process vLLM or an NVIDIA-hosted Build endpoint.
 
-A Super-49B NIM used only for `POST /v1/answer` sends a plain text-generation request and does not require tool calling. Agentic retrieval is a separate configuration and stays off unless you set `agentic.enabled`.
+A Super-49B NIM used only for one-shot `Retriever.answer()` text generation does not require tool calling. Agentic retrieval is a separate CLI path and stays off unless you pass `--agentic`.
 
 The agentic ReAct loop sends OpenAI-style tool-call messages with `tool_choice=auto`. A self-hosted vLLM-backed Super-49B NIM rejects those requests with HTTP 400 unless you also pass `--enable-auto-tool-choice` and `--tool-call-parser llama3_json` in `NIM_PASSTHROUGH_ARGS`.
 
-You can reuse the same Super-49B NIM for agentic retrieval after you add those arguments. `POST /v1/answer` continues to work.
+You can reuse the same Super-49B NIM for agentic retrieval after you add those arguments. One-shot answer generation continues to work.
 
 Confirm the passthrough arguments on the running NIM include `--enable-auto-tool-choice` and `--tool-call-parser llama3_json`. Then run the remote command in [Remote OpenAI-compatible NIM or hosted endpoint](#remote-openai-compatible-endpoint). Point `--agentic-invoke-url` at the NIM chat-completions URL and set `--agentic-llm-model` to `nvidia/llama-3.3-nemotron-super-49b-v1.5`. Reuse the same embedding invoke URL and model name that you used at ingest.
-
-For service-mode `POST /v1/query` with `agentic=true` and the MCP `agentic_query` tool, also set the service `agentic` block:
-
-```yaml
-agentic:
-  enabled: true
-  llm_model: nvidia/llama-3.3-nemotron-super-49b-v1.5
-  invoke_url: http://answer-llm:8000/v1/chat/completions
-```
-
-`llm_model` is the model ID advertised by the NIM, not the LiteLLM `openai/` prefix used by `llm.model`.
-
-If you register MCP retrieval tools, also set `mcp.enabled=true` and set `mcp.query_methods` to `agentic` or `all`. Agentic MCP tools are omitted unless `agentic.enabled` is true.
-
-For other self-hosted OpenAI-compatible NIMs, enable automatic tool choice and the parser that model requires. The `llama3_json` parser is the verified Super-49B setting.
-
-## Enable agentic retrieval in the service { #enable-agentic-retrieval-in-the-service }
-
-Retriever Service exposes agentic retrieval on `POST /v1/query` when `agentic.enabled` is true. Service mode requires remote OpenAI-compatible LLM and embedding endpoints. Local in-process vLLM remains available on the one-shot CLI and harness paths only.
-
-Enable agentic retrieval in `retriever-service.yaml`:
-
-```yaml
-agentic:
-  enabled: true
-  llm_model: nvidia/llama-3.3-nemotron-super-49b-v1.5
-  invoke_url: https://your-llm.example/v1/chat/completions
-  reasoning_effort: high
-  backend_top_k: 20
-  react_max_steps: 50
-  request_timeout_s: 1800
-```
-
-`agentic.invoke_url` and `agentic.llm_model` are required when `agentic.enabled` is true. The VectorDB process owns the LanceDB volume and executes the agentic workflow. Start it with matching `--agentic`, `--agentic-llm-model`, and `--agentic-invoke-url` options. LLM and embedding credentials are resolved from the service process environment (`NVIDIA_API_KEY`, then `NGC_API_KEY`).
-
-Agentic service requests use the configured remote embedding endpoint for retrieval. The result-selection graph does not require a local embedding model or Hugging Face cache.
-
-Enabling `/v1/answer` does not populate this `agentic` block. Refer to [Self-hosted Super-49B](#self-hosted-super-49b).
-
-The VectorDB service runs up to four non-agentic queries concurrently by default.
-Set `--max-concurrent-queries` when starting `nemo_retriever.service.vectordb_app`
-to use a different positive limit.
-
-REST clients set the flag on `/v1/query`:
-
-```bash
-curl -X POST http://localhost:7670/v1/query \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "find documents about parser behavior", "top_k": 5, "agentic": true}'
-```
-
-When service auth is enabled, send `Authorization: Bearer <token>` (`NEMO_RETRIEVER_API_TOKEN`). Requests with `agentic: true` return HTTP `400` when agentic retrieval is not configured on the service.
-
-`top_k` cannot exceed the configured `agentic.backend_top_k` (default 20). Agentic queries are capped at 4,096 characters.
-
-## Query with MCP { #query-with-mcp }
-
-`retriever service start` mounts a FastMCP HTTP endpoint when `mcp.enabled` is true. The default mount path is `/mcp`. Set `mcp.path` to use a different path. The bundled `retriever-service.yaml` sets `mcp.enabled` to `true` by default. Model Context Protocol (MCP) agents can use that endpoint to call the running service for health checks, pipeline introspection, document ingestion, job status, VectorDB query, agentic retrieval, and answer generation. If service auth is enabled, the MCP endpoint uses the same bearer-token middleware as the REST API.
-
-If `mcp.enabled` is false, the service returns HTTP `404` at the MCP path.
-
-Plain and agentic retrieval share `POST /v1/query` and the same hits response envelope. They are separate MCP tools so agents can choose explicitly:
-
-- `query` calls `POST /v1/query` with `agentic=false` for one-pass dense or hybrid retrieval.
-- `agentic_query` calls `POST /v1/query` with `agentic=true` and runs the ReAct retrieval workflow. It is added to MCP when `agentic.enabled` is true.
-
-Use `--query-methods classic` (default), `agentic`, or `all` to choose which retrieval tools the MCP server registers. The mounted MCP endpoint uses the same knob through `mcp.query_methods` in the service config. Agentic tools are omitted unless `agentic.enabled` is also true.
-
-For local stdio-based agents, run the MCP server as a shim that points at an existing retriever service:
-
-```bash
-retriever service mcp-stdio \
-  --service-url http://localhost:7670 \
-  --query-methods agentic \
-  --api-token "$NEMO_RETRIEVER_API_TOKEN"
-```
-For remote agents, expose the retriever service URL and configure the agent to connect to the MCP mount path. The default is:
-
-```text
-https://<retriever-service-host>/mcp
-```
-
-If you set `mcp.path`, use that configured path instead of `/mcp`.
-
-The `ingest_documents` MCP tool accepts either paths visible to the MCP server process or inline `content_base64` document bytes. Use inline base64 for remote agents whose local files are not present on the service host.
 
 ## Result contract { #result-contract }
 
 Every agentic Retriever run writes a lightweight Agent Trajectory Interchange
 Format (ATIF) JSON trajectory under `./agentic-traces` by default. The
 trajectory bounds observation content to keep the file lightweight. These
-traces are not added to HTTP responses. If a trace cannot be persisted,
+traces are not printed in CLI output. If a trace cannot be persisted,
 retrieval continues and emits a warning.
 
-One-pass retrieval returns text-enriched chunk hits. Agentic retrieval ranks documents. Each selected document is rehydrated from the retrieval hop that returned it. CLI and service output then use different JSON shapes.
+One-pass retrieval returns text-enriched chunk hits. Agentic retrieval ranks documents. Each selected document is rehydrated from the retrieval hop that returned it. CLI output then uses a different JSON shape.
 
 CLI `retriever query` without `--agentic` projects each hit to five fields: `modality`, `page_number`, `score`, `source`, and `text`. CLI `retriever query --agentic` does not use that projection. It prints the internal hit dictionary plus these ranking annotations:
 
@@ -230,35 +145,19 @@ usage, the response sets `usage` to `null`.
 `--include-usage` applies only to agentic queries. Classic `retriever query`
 output is unchanged.
 
-Service `POST /v1/query` with `agentic=true` maps those ranked hits onto the classic hits envelope and can include the same optional `usage` object at the response root. Successful responses set `query_mode` to `"agentic"`. Classic dense or hybrid `/v1/query` (including `format=evidence`) sets `query_mode` to `"classic"` and does not add usage metadata. For backward compatibility with the previous agentic service contract, service and MCP hits also copy `rank` and `result_source` under `metadata`; the top-level fields are authoritative and carry the same values.
-
-When no retrieval hop captured the document, the service envelope fills these classic fields with null: `text`, `source_id`, `path`, `page_number`, `pdf_basename`, and `pdf_page`. `source` falls back to `doc_id`. That null-key behavior applies to service and MCP hits only, not to CLI `--agentic` output.
-
 ## Failure and retry behavior { #failure-and-retry-behavior }
 
 Operational failures from the agent LLM or retrieval tool, including embedding, vector database, and reranker endpoint failures, terminate the query with an error instead of returning a successful empty result.
 
 An HTTP `400` from the chat-completions NIM with `"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set` means the self-hosted endpoint is not tool-call ready. Refer to [Self-hosted Super-49B](#self-hosted-super-49b). The CLI then exits with `Agentic retrieval failed (llm_call_failed)`.
 
-On the service:
-
-- HTTP `400` when `agentic.enabled` is false.
-- HTTP `422` when the query exceeds 4,096 characters, `format` is not `hits`, or `rerank` is combined with `agentic`.
-- HTTP `501` when agentic service queries have no remote embedding endpoint.
-- HTTP `503` with a `Retry-After: 30` header when every dedicated agentic worker is busy. The service sheds load instead of queueing behind a multi-minute run.
-- HTTP `502` when the gateway cannot reach the VectorDB process.
-
-Agentic runs use a dedicated worker pool in the VectorDB process so they cannot exhaust the capacity used by plain queries. A ReAct run cannot be interrupted once started, so a worker stays occupied until it finishes even if the caller times out or disconnects.
-
 ## Limitations and resource requirements { #limitations-and-resource-requirements }
 
 - Local in-process agent LLMs are limited to the tested `nemotron-8b` and `super-49b` profiles. Custom in-process models require an OpenAI-compatible endpoint instead.
 - Local CLI and harness runs need a CUDA GPU host and the `[local]` extra. `super-49b` needs two visible GPUs and `--agentic-local-tensor-parallel-size 2`.
-- Retriever Service agentic queries require a remote chat-completions URL, a remote embedding endpoint, and matching credentials in the process environment.
-- A self-hosted Super-49B NIM is limited to `POST /v1/answer` until you add the tool-call passthrough arguments. Enabling `/v1/answer` does not configure `agentic`.
-- Remote MCP agents require `mcp.enabled=true` and must use the configured mount path, which defaults to `/mcp`.
+- A self-hosted Super-49B NIM requires the tool-call passthrough arguments before agentic retrieval works. Enabling one-shot answer generation does not configure `--agentic`.
 - Agentic ranking is document-level. Rehydrated hits include chunk `text` when a retrieval hop returned the document. Otherwise load the source document by `doc_id`.
-- Service agentic queries accept a single query string, `format=hits` only, and cannot combine `rerank=true` on the same `/v1/query` request. On the CLI, `--rerank` applies to each agent retrieve hop.
+- On the CLI, `--rerank` applies to each agent retrieve hop.
 
 ## Related Topics { #related-topics }
 

@@ -18,14 +18,10 @@ logger = logging.getLogger(__name__)
 app = typer.Typer(
     help=(
         "NeMo Retriever product workflows: ingest content, query an index, "
-        "run benchmark harnesses, or operate the service."
+        "or run benchmark harnesses."
     )
 )
 
-# Service sub-app is always available (lightweight, no GPU deps).
-from nemo_retriever.service.cli import app as service_app  # noqa: E402
-
-app.add_typer(service_app, name="service")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(query_app, name="query")
 

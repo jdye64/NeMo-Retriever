@@ -2,7 +2,7 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OpenTelemetry tracing helpers for retriever service roles."""
+"""OpenTelemetry tracing helpers for NIM HTTP clients."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ _W3C_TRACE_CONTEXT_HEADER_NAMES = frozenset({"traceparent", "tracestate"})
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SERVICE_NAME = "nemo-retriever-service"
+_DEFAULT_SERVICE_NAME = "nemo-retriever"
 _CONFIGURED_PROVIDER: Any | None = None
 _TRACE_CONTEXT_PROPAGATOR = TraceContextTextMapPropagator()
 _SENSITIVE_ATTRIBUTE_TOKENS = frozenset(
@@ -55,11 +55,11 @@ def tracing_enabled_from_env(env: Mapping[str, str] | None = None) -> bool:
     return bool(traces_exporter and traces_exporter.lower() == "otlp" and endpoint)
 
 
-def configure_tracing(*, service_role: str, service_name: str | None = None) -> bool:
+def configure_tracing(*, service_role: str = "library", service_name: str | None = None) -> bool:
     """Configure process-wide OTLP tracing when enabled by environment.
 
     Tracing is observability-only. Any setup failure is logged and reported as
-    ``False`` without preventing service startup.
+    ``False`` without preventing the caller from continuing.
     """
     global _CONFIGURED_PROVIDER
 
@@ -107,7 +107,7 @@ def configure_tracing(*, service_role: str, service_name: str | None = None) -> 
         return False
 
 
-def get_tracer(name: str = "nemo_retriever.service") -> Any:
+def get_tracer(name: str = "nemo_retriever") -> Any:
     """Return a tracer for service instrumentation."""
     return trace.get_tracer(name)
 

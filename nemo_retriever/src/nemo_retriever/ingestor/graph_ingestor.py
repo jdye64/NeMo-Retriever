@@ -290,7 +290,7 @@ def _hint_for_stage(diag: _StageDiagnostic, statuses: set[int | None]) -> str:
         )
     return (
         f"{name}{url_clause} reported a row-level error \u2014 verify "
-        "the NIM is reachable from the retriever service host "
+        "the NIM is reachable from the ingest host "
         f"(e.g. `curl -sS {diag.invoke_url or '<invoke_url>'}` "
         "should return a non-empty response) and that its readiness "
         "endpoint is healthy."

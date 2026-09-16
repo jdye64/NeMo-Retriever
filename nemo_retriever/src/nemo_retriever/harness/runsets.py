@@ -474,7 +474,6 @@ def run_runfiles(
     session_name: str = "runfiles",
     dataset_paths_file: Path | None = None,
     mode: str | None = None,
-    service_endpoint: str | None = None,
     overrides: Sequence[str] = (),
     requirements: Sequence[str] = (),
     dry_run: bool = False,
@@ -508,7 +507,6 @@ def run_runfiles(
             overrides=effective_overrides,
             requirements=effective_requirements,
             dry_run=dry_run,
-            service_endpoint=service_endpoint if effective_mode == "service" else None,
         )
         artifact_name = f"{index:03d}_{run_name}"
         runs.append(
@@ -530,7 +528,6 @@ def run_runfiles(
                 "runfile_path": str(request.source_path),
                 "artifact_dir": artifact_name,
                 "mode": effective_mode,
-                "service_endpoint": service_endpoint if effective_mode == "service" else None,
                 "dataset_paths": dataset_paths.to_dict() if dataset_paths is not None else None,
                 "overrides": list(effective_overrides),
                 "requirements": list(effective_requirements),

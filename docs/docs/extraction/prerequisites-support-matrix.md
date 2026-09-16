@@ -11,7 +11,6 @@ Before you begin using [NeMo Retriever Library](overview.md), confirm your softw
 ## Software Requirements { #software-requirements }
 
 - Linux operating systems (Ubuntu 22.04 or later recommended) for supported local GPU inference. For remote NIM inference, the base package can also be installed on Windows x64 and macOS Apple Silicon (arm64); local GPU inference is not supported on those platforms. macOS Intel (x86_64) is not supported: package installation fails because Ray `>=2.56.1` has no Intel Mac wheels (including in-process library mode).
-- Release builds of the `nrl-service` container image are a multi-architecture manifest for `linux/amd64` and `linux/arm64`. `docker pull` selects the architecture that matches the host. Local GPU inference in that image still requires Linux with a supported NVIDIA GPU and driver.
 - [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) (local GPU inference only; NVIDIA Driver >= `580`, CUDA >= `13.0`)
 - [Python](https://www.python.org/downloads/) `3.12` — required to install and run the NeMo Retriever Library Python API, CLI, and related packages from PyPI (for example `pip` or `uv`). Older Python versions will fail dependency resolution without a clear error.
 - [UV Python package and environment manager](https://docs.astral.sh/uv/getting-started/installation/) (optional; recommended for creating isolated environments)
@@ -108,17 +107,7 @@ For self-hosted NIM GPU memory by SKU and precision, refer to the following prod
 
 ### Configure query reranking { #configure-query-reranking }
 
-To use service query reranking, point the service at a ranking endpoint and model ID, then send `rerank: true` in a `/v1/query` request.
-
-Example service configuration:
-
-```yaml
-nim_endpoints:
-  rerank_invoke_url: http://llama-nemotron-rerank-vl-1b-v2:8000/v1/ranking
-  rerank_model_name: nvidia/llama-nemotron-rerank-vl-1b-v2
-```
-
-Deploying a rerank NIM without setting `rerank_invoke_url` does not enable query reranking.
+To rerank `retriever query` results, pass `--rerank` and a ranking endpoint or local reranker model. Refer to the [CLI reference](https://github.com/NVIDIA/NeMo-Retriever/tree/26.08.1/nemo_retriever/docs/cli).
 
 <a id="nemotron-ocr-v2-language-mode"></a>
 

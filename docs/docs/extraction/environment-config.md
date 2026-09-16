@@ -22,41 +22,9 @@ On Windows PowerShell, set the variables in the session, for example `$env:NVIDI
 | `NVIDIA_API_KEY`                    | `nvapi-*************` <br/>                              | An authorized build.nvidia.com API key, used to interact with NVIDIA-hosted NIMs. Create through build.nvidia.com or through [NGC](https://org.ngc.nvidia.com/setup/api-keys). |
 | `NGC_API_KEY`                | —                                                          | The key that self-hosted NIM microservices use to access NGC resources. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`    | `http://otel-collector:4317` <br/>                       | The endpoint for the OpenTelemetry exporter, used for sending telemetry data. |
-| `OTEL_METRICS_EXPORTER` | `otlp` | The retriever service metrics exporter. Set to `none` to disable OpenTelemetry metric export while retaining other supported telemetry. |
+| `OTEL_METRICS_EXPORTER` | `otlp` | The OpenTelemetry metrics exporter. Set to `none` to disable metric export while retaining other supported telemetry. |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `5000` | The metric export interval in milliseconds. Set a larger value to reduce export frequency. |
 
-
-## Retriever Service Log Level { #retriever-service-log-level }
-
-The current Retriever service reads log verbosity from `logging.level`.
-The default is `INFO`.
-`INGEST_LOG_LEVEL` does not control `retriever service start` or the current service container.
-
-The following table lists the supported controls.
-
-| Interface | Control | Notes |
-|-----------|---------|-------|
-| CLI | `retriever service start --log-level LEVEL` | Overrides YAML `logging.level`. |
-| YAML | `logging.level` in `retriever-service.yaml` | Bundled default is `INFO`. |
-
-Typical values are `DEBUG`, `INFO`, `WARNING`, `ERROR`, and `CRITICAL`.
-
-The following CLI example starts the service at `CRITICAL`:
-
-```bash
-retriever service start --log-level CRITICAL
-```
-
-The following YAML sets the same level in `retriever-service.yaml`:
-
-```yaml
-logging:
-  level: CRITICAL
-```
-
-Setting `INGEST_LOG_LEVEL` in the process environment does not change `logging.level`.
-That variable remains in the `examples/launch_libmode_*.py` scripts, the legacy `docker/scripts/entrypoint.sh` service entrypoint, and `.devcontainer/devcontainer.json`.
-The current service image does not use those paths.
 
 For Ray worker logging, refer to [Configure Ray Logging](ray-logging.md).
 

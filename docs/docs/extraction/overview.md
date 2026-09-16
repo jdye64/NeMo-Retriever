@@ -1,6 +1,6 @@
 # NeMo Retriever Library Overview { #what-is-nemo-retriever-library }
 
-NVIDIA NeMo Retriever Library (NRL) extracts text, tables, charts, infographics, and transcripts from PDFs, HTML, Office documents, audio, video, and images. Run it as a Python library or Docker service, and route inference through NVIDIA NIM microservices or local Nemotron models for downstream RAG and generative applications.
+NVIDIA NeMo Retriever Library (NRL) extracts text, tables, charts, infographics, and transcripts from PDFs, HTML, Office documents, audio, video, and images. Run it as a Python library, and route inference through NVIDIA NIM microservices or local Nemotron models for downstream RAG and generative applications.
 
 NeMo Retriever Library splits documents into pages, classifies sub-page content (text, tables, charts, and infographics), extracts it, and applies optical character recognition (OCR) where needed into a standard schema. It can compute embeddings for extracted content and store vectors in [LanceDB](https://lancedb.com/) when you pass `vdb_op="lancedb"` to upload (refer to [Vector databases](vdbs.md)).
 
@@ -54,7 +54,7 @@ NeMo Retriever Library supports the following file types:
 
 - [Pre-Requisites & Support Matrix](prerequisites-support-matrix.md)
 - [Agentic retrieval (concept)](agentic-retrieval-concept.md) and [Workflow: Agentic retrieval](workflow-agentic-retrieval.md)
-- [Deployment options](deployment-options.md) — library, Docker service, hosted vs self-hosted NIMs in one place
+- [Deployment options](deployment-options.md) — library, hosted vs self-hosted NIMs in one place
 - [Notebooks](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/examples/README.md)
 - [NVIDIA AI Blueprints catalog](https://build.nvidia.com/explore/discover) — solution cards, enterprise RAG blueprints, and end-to-end patterns (including [Enterprise RAG — multimodal PDF data extraction](https://build.nvidia.com/nvidia/multimodal-pdf-data-extraction-for-enterprise-rag))
 - For integration pathways, refer to [Starter kits](https://github.com/NVIDIA/NeMo-Retriever/blob/26.08.1/examples/README.md).
